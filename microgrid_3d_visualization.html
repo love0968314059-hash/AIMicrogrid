@@ -375,11 +375,201 @@
         .glow {
             box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
         }
+        
+        /* 详细界面模态框 */
+        .detail-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .detail-modal.active {
+            display: flex;
+        }
+        
+        .detail-content {
+            background: rgba(15, 52, 96, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 2px solid rgba(100, 200, 255, 0.3);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+        
+        .detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(100, 200, 255, 0.2);
+        }
+        
+        .detail-title {
+            font-size: 1.5em;
+            color: #00d4ff;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 2em;
+            cursor: pointer;
+            padding: 0 10px;
+        }
+        
+        .detail-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        
+        .detail-item {
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+        }
+        
+        .detail-label {
+            color: #aaa;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        
+        .detail-value {
+            color: #00d4ff;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        
+        /* 策略面板 */
+        #strategy-panel {
+            top: 80px;
+            left: 320px;
+            width: 400px;
+            max-height: calc(100vh - 100px);
+            background: rgba(15, 52, 96, 0.85);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(100, 200, 255, 0.2);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            overflow-y: auto;
+        }
+        
+        .strategy-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(100, 200, 255, 0.2);
+        }
+        
+        .strategy-tab {
+            padding: 10px 15px;
+            background: none;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .strategy-tab.active {
+            color: #00d4ff;
+            border-bottom-color: #00d4ff;
+        }
+        
+        .strategy-content {
+            display: none;
+        }
+        
+        .strategy-content.active {
+            display: block;
+        }
+        
+        .strategy-metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+        
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        .comparison-table th,
+        .comparison-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .comparison-table th {
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        
+        .comparison-table tr:hover {
+            background: rgba(0, 212, 255, 0.1);
+        }
+        
+        /* 可点击提示 */
+        .clickable-hint {
+            position: absolute;
+            background: rgba(0, 212, 255, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.8em;
+            pointer-events: none;
+            z-index: 200;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .clickable-hint.show {
+            opacity: 1;
+        }
+        
+        /* 3D对象高亮 */
+        .highlighted {
+            outline: 2px solid #00d4ff;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
     <div id="container">
         <div id="canvas-container"></div>
+        
+        <!-- 点击提示 -->
+        <div id="click-hint" class="clickable-hint"></div>
+        
+        <!-- 详细界面模态框 -->
+        <div id="detail-modal" class="detail-modal">
+            <div class="detail-content">
+                <div class="detail-header">
+                    <div class="detail-title" id="detail-title">设备详情</div>
+                    <button class="close-btn" onclick="closeDetailModal()">&times;</button>
+                </div>
+                <div id="detail-body"></div>
+            </div>
+        </div>
         
         <!-- Header -->
         <div id="header" class="overlay">
@@ -541,6 +731,105 @@
             </div>
         </div>
         
+        <!-- Strategy Panel -->
+        <div id="strategy-panel" class="overlay">
+            <div class="panel-title">📈 策略管理</div>
+            
+            <div class="strategy-tabs">
+                <button class="strategy-tab active" onclick="switchStrategyTab('execution')">执行情况</button>
+                <button class="strategy-tab" onclick="switchStrategyTab('comparison')">策略对比</button>
+            </div>
+            
+            <!-- 策略执行情况 -->
+            <div id="strategy-execution" class="strategy-content active">
+                <div class="panel-title" style="font-size: 0.95em;">当前策略执行</div>
+                
+                <div class="strategy-metric">
+                    <span>当前策略:</span>
+                    <span id="current-strategy">自适应混合策略</span>
+                </div>
+                
+                <div class="strategy-metric">
+                    <span>RL置信度:</span>
+                    <span id="rl-confidence">--%</span>
+                </div>
+                
+                <div class="strategy-metric">
+                    <span>探索率(ε):</span>
+                    <span id="epsilon-value">--</span>
+                </div>
+                
+                <div class="strategy-metric">
+                    <span>训练步数:</span>
+                    <span id="training-steps">0</span>
+                </div>
+                
+                <div class="strategy-metric">
+                    <span>经验池大小:</span>
+                    <span id="buffer-size">0</span>
+                </div>
+                
+                <div class="strategy-metric">
+                    <span>近期性能:</span>
+                    <span id="recent-performance">--</span>
+                </div>
+                
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <div class="panel-title" style="font-size: 0.95em;">当前动作</div>
+                    <div class="strategy-metric">
+                        <span>电池动作:</span>
+                        <span id="current-battery-action">待机</span>
+                    </div>
+                    <div class="strategy-metric">
+                        <span>柴油机状态:</span>
+                        <span id="current-diesel-status">关闭</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 策略对比 -->
+            <div id="strategy-comparison" class="strategy-content">
+                <div class="panel-title" style="font-size: 0.95em;">策略对比分析</div>
+                
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>策略</th>
+                            <th>成本</th>
+                            <th>可再生%</th>
+                            <th>排名</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comparison-table-body">
+                        <tr>
+                            <td>RL策略</td>
+                            <td id="rl-cost">--</td>
+                            <td id="rl-renewable">--%</td>
+                            <td id="rl-rank">--</td>
+                        </tr>
+                        <tr>
+                            <td>规则策略</td>
+                            <td id="rule-cost">--</td>
+                            <td id="rule-renewable">--%</td>
+                            <td id="rule-rank">--</td>
+                        </tr>
+                        <tr>
+                            <td>随机策略</td>
+                            <td id="random-cost">--</td>
+                            <td id="random-renewable">--%</td>
+                            <td id="random-rank">--</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 15px;">
+                    <button class="control-btn btn-primary" onclick="runStrategyComparison()" style="width: 100%;">
+                        🔄 运行策略对比
+                    </button>
+                </div>
+            </div>
+        </div>
+        
         <!-- Chat Panel -->
         <div id="chat-panel" class="overlay">
             <div class="panel-title">💬 智能助手</div>
@@ -573,6 +862,35 @@
         let simulationSpeed = 1;
         let dieselOn = false;
         let autoMode = true;
+        
+        // 点击交互
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        let clickableObjects = new Map();
+        let currentDetailComponent = null;
+        
+        // 策略数据
+        let strategyData = {
+            current: 'adaptive',
+            rl_confidence: 0.5,
+            epsilon: 1.0,
+            training_steps: 0,
+            buffer_size: 0,
+            recent_performance: 0,
+            current_action: { battery_action: 0, diesel_on: false }
+        };
+        
+        let comparisonData = {
+            rl: { cost: 0, renewable: 0, rank: 0 },
+            rule: { cost: 0, renewable: 0, rank: 0 },
+            random: { cost: 0, renewable: 0, rank: 0 }
+        };
+        
+        // 模拟周期：一个月（30天）
+        const SIMULATION_DAYS = 30;
+        const STEPS_PER_MINUTE = 1;
+        const TOTAL_STEPS = SIMULATION_DAYS * 24 * 60; // 43200步
+        let currentStep = 0;
         
         // 初始化Three.js场景
         function initScene() {
@@ -616,6 +934,277 @@
             
             // 窗口大小调整
             window.addEventListener('resize', onWindowResize);
+            
+            // 添加点击事件
+            renderer.domElement.addEventListener('click', onMouseClick);
+            renderer.domElement.addEventListener('mousemove', onMouseMove);
+        }
+        
+        // 鼠标点击事件
+        function onMouseClick(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            
+            if (intersects.length > 0) {
+                const clickedObject = intersects[0].object;
+                const component = findComponentByObject(clickedObject);
+                
+                if (component) {
+                    showDetailModal(component);
+                }
+            }
+        }
+        
+        // 鼠标移动事件（显示提示）
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            
+            const hint = document.getElementById('click-hint');
+            if (intersects.length > 0) {
+                const hoveredObject = intersects[0].object;
+                const component = findComponentByObject(hoveredObject);
+                
+                if (component) {
+                    hint.textContent = `点击查看 ${component.name} 详情`;
+                    hint.style.left = event.clientX + 10 + 'px';
+                    hint.style.top = event.clientY + 10 + 'px';
+                    hint.classList.add('show');
+                    renderer.domElement.style.cursor = 'pointer';
+                } else {
+                    hint.classList.remove('show');
+                    renderer.domElement.style.cursor = 'default';
+                }
+            } else {
+                hint.classList.remove('show');
+                renderer.domElement.style.cursor = 'default';
+            }
+        }
+        
+        // 查找组件
+        function findComponentByObject(obj) {
+            let current = obj;
+            while (current) {
+                if (current.userData && current.userData.componentType) {
+                    return {
+                        type: current.userData.componentType,
+                        name: current.userData.componentName || current.userData.componentType,
+                        object: current
+                    };
+                }
+                current = current.parent;
+            }
+            return null;
+        }
+        
+        // 显示详细界面
+        function showDetailModal(component) {
+            currentDetailComponent = component;
+            const modal = document.getElementById('detail-modal');
+            const title = document.getElementById('detail-title');
+            const body = document.getElementById('detail-body');
+            
+            title.textContent = component.name + ' - 详细信息';
+            
+            // 获取当前状态
+            const state = systemState || getCurrentState();
+            let html = '';
+            
+            switch(component.type) {
+                case 'solar':
+                    html = generateSolarDetail(state);
+                    break;
+                case 'wind':
+                    html = generateWindDetail(state);
+                    break;
+                case 'battery':
+                    html = generateBatteryDetail(state);
+                    break;
+                case 'load':
+                    html = generateLoadDetail(state);
+                    break;
+                case 'grid':
+                    html = generateGridDetail(state);
+                    break;
+                default:
+                    html = '<p>暂无详细信息</p>';
+            }
+            
+            body.innerHTML = html;
+            modal.classList.add('active');
+        }
+        
+        // 关闭详细界面
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+            currentDetailComponent = null;
+        }
+        
+        // 生成各组件详细信息
+        function generateSolarDetail(state) {
+            const solar = state.components?.solar || {};
+            return `
+                <div class="detail-info">
+                    <div class="detail-item">
+                        <div class="detail-label">装机容量</div>
+                        <div class="detail-value">${solar.capacity || 100} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">当前功率</div>
+                        <div class="detail-value">${(solar.current_power || 0).toFixed(2)} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">利用率</div>
+                        <div class="detail-value">${((solar.current_power || 0) / (solar.capacity || 100) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">太阳辐照度</div>
+                        <div class="detail-value">${(state.weather?.irradiance || 0).toFixed(0)} W/m²</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">环境温度</div>
+                        <div class="detail-value">${(state.weather?.temperature || 0).toFixed(1)} °C</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">云层覆盖</div>
+                        <div class="detail-value">${((state.weather?.cloud_cover || 0) * 100).toFixed(1)}%</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function generateWindDetail(state) {
+            const wind = state.components?.wind || {};
+            return `
+                <div class="detail-info">
+                    <div class="detail-item">
+                        <div class="detail-label">装机容量</div>
+                        <div class="detail-value">${wind.capacity || 50} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">当前功率</div>
+                        <div class="detail-value">${(wind.current_power || 0).toFixed(2)} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">利用率</div>
+                        <div class="detail-value">${((wind.current_power || 0) / (wind.capacity || 50) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">风速</div>
+                        <div class="detail-value">${(state.weather?.wind_speed || 0).toFixed(1)} m/s</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">风机数量</div>
+                        <div class="detail-value">2 台</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">运行状态</div>
+                        <div class="detail-value">正常</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function generateBatteryDetail(state) {
+            const battery = state.components?.battery || {};
+            return `
+                <div class="detail-info">
+                    <div class="detail-item">
+                        <div class="detail-label">容量</div>
+                        <div class="detail-value">${battery.capacity || 200} kWh</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">当前SOC</div>
+                        <div class="detail-value">${((battery.soc || 0.5) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">健康度</div>
+                        <div class="detail-value">${((battery.health || 1.0) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">剩余容量</div>
+                        <div class="detail-value">${((battery.soc || 0.5) * (battery.capacity || 200)).toFixed(1)} kWh</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">最大充电功率</div>
+                        <div class="detail-value">50 kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">最大放电功率</div>
+                        <div class="detail-value">50 kW</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function generateLoadDetail(state) {
+            const load = state.components?.load || {};
+            return `
+                <div class="detail-info">
+                    <div class="detail-item">
+                        <div class="detail-label">当前负荷</div>
+                        <div class="detail-value">${(load.current || 0).toFixed(2)} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">基础负荷</div>
+                        <div class="detail-value">${load.base || 80} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">峰值负荷</div>
+                        <div class="detail-value">${load.peak || 150} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">负荷率</div>
+                        <div class="detail-value">${((load.current || 0) / (load.peak || 150) * 100).toFixed(1)}%</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function generateGridDetail(state) {
+            const grid = state.components?.grid || {};
+            return `
+                <div class="detail-info">
+                    <div class="detail-item">
+                        <div class="detail-label">连接状态</div>
+                        <div class="detail-value">${grid.connected ? '已连接' : '断开'}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">最大购电功率</div>
+                        <div class="detail-value">${grid.max_import || 100} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">最大售电功率</div>
+                        <div class="detail-value">${grid.max_export || 50} kW</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">购电价格</div>
+                        <div class="detail-value">¥${(state.price?.buy_price || 0.8).toFixed(2)}/kWh</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">售电价格</div>
+                        <div class="detail-value">¥${(state.price?.sell_price || 0.56).toFixed(2)}/kWh</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">时段类型</div>
+                        <div class="detail-value">${state.price?.period || 'normal'}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function getCurrentState() {
+            return systemState || {
+                components: {},
+                weather: {},
+                price: {}
+            };
         }
         
         function setupLighting() {
@@ -732,6 +1321,12 @@
                 }
             }
             
+            // 添加组件标识
+            panelGroup.userData = {
+                componentType: 'solar',
+                componentName: '光伏阵列'
+            };
+            
             // 光伏标签
             const labelSprite = createLabel('☀️ 光伏阵列\n100 kW', 0xf1c40f);
             labelSprite.position.set(-25, 15, -22);
@@ -776,6 +1371,10 @@
                 turbineGroup.bladesGroup = bladesGroup;
                 
                 turbineGroup.position.set(40 + i * 25, 0, -30);
+                turbineGroup.userData = {
+                    componentType: 'wind',
+                    componentName: '风力发电'
+                };
                 scene.add(turbineGroup);
                 windTurbines.push(turbineGroup);
             }
@@ -821,6 +1420,12 @@
             const labelSprite = createLabel('🔋 储能系统\n200 kWh', 0x2ecc71);
             labelSprite.position.set(3, 18, 35);
             batterySystem.add(labelSprite);
+            
+            // 添加组件标识
+            batterySystem.userData = {
+                componentType: 'battery',
+                componentName: '储能系统'
+            };
             
             scene.add(batterySystem);
         }
@@ -870,6 +1475,12 @@
             labelSprite.position.set(0, 25, 0);
             loadCenter.add(labelSprite);
             
+            // 添加组件标识
+            loadCenter.userData = {
+                componentType: 'load',
+                componentName: '负荷中心'
+            };
+            
             scene.add(loadCenter);
         }
         
@@ -907,6 +1518,12 @@
             const labelSprite = createLabel('⚡ 电网连接\n100kW进/50kW出', 0x9b59b6);
             labelSprite.position.set(0, 30, -5);
             gridConnection.add(labelSprite);
+            
+            // 添加组件标识
+            gridConnection.userData = {
+                componentType: 'grid',
+                componentName: '电网连接'
+            };
             
             scene.add(gridConnection);
         }
@@ -1325,6 +1942,9 @@
                 isSimulating = !isSimulating;
                 this.textContent = isSimulating ? '⏸️ 暂停模拟' : '▶️ 开始模拟';
                 if (isSimulating) {
+                    if (currentStep === 0) {
+                        addChatMessage('system', `🚀 开始${SIMULATION_DAYS}天模拟运行（共${TOTAL_STEPS.toLocaleString()}步）`);
+                    }
                     startSimulation();
                 }
             });
@@ -1332,8 +1952,13 @@
             // 重置
             document.getElementById('btn-reset').addEventListener('click', function() {
                 isSimulating = false;
+                currentStep = 0;
                 document.getElementById('btn-play').textContent = '▶️ 开始模拟';
-                addChatMessage('system', '🔄 系统已重置');
+                window.simHistory = { solar_power: [], wind_power: [], load_power: [] };
+                strategyData.training_steps = 0;
+                strategyData.buffer_size = 0;
+                updateStrategyExecution();
+                addChatMessage('system', '🔄 系统已重置，准备开始新的一个月模拟');
             });
             
             // 聊天发送
@@ -1362,45 +1987,164 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         
-        // 模拟运行
+        // 策略面板切换
+        function switchStrategyTab(tab) {
+            // 更新标签
+            document.querySelectorAll('.strategy-tab').forEach(t => {
+                t.classList.remove('active');
+                if (t.textContent.includes(tab === 'execution' ? '执行情况' : '策略对比')) {
+                    t.classList.add('active');
+                }
+            });
+            
+            // 更新内容
+            document.querySelectorAll('.strategy-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('strategy-' + tab).classList.add('active');
+        }
+        
+        // 更新策略执行情况
+        function updateStrategyExecution() {
+            document.getElementById('rl-confidence').textContent = 
+                (strategyData.rl_confidence * 100).toFixed(1) + '%';
+            document.getElementById('epsilon-value').textContent = 
+                strategyData.epsilon.toFixed(4);
+            document.getElementById('training-steps').textContent = 
+                strategyData.training_steps.toLocaleString();
+            document.getElementById('buffer-size').textContent = 
+                strategyData.buffer_size.toLocaleString();
+            document.getElementById('recent-performance').textContent = 
+                strategyData.recent_performance.toFixed(2);
+            
+            // 当前动作
+            const batteryAction = strategyData.current_action.battery_action;
+            let batteryText = '待机';
+            if (batteryAction > 0.1) {
+                batteryText = `充电 ${(batteryAction * 100).toFixed(0)}%`;
+            } else if (batteryAction < -0.1) {
+                batteryText = `放电 ${(Math.abs(batteryAction) * 100).toFixed(0)}%`;
+            }
+            document.getElementById('current-battery-action').textContent = batteryText;
+            document.getElementById('current-diesel-status').textContent = 
+                strategyData.current_action.diesel_on ? '运行中' : '关闭';
+        }
+        
+        // 运行策略对比
+        function runStrategyComparison() {
+            // 模拟策略对比数据
+            comparisonData.rl = {
+                cost: Math.random() * 1000 + 500,
+                renewable: Math.random() * 20 + 70,
+                rank: 1
+            };
+            comparisonData.rule = {
+                cost: comparisonData.rl.cost + Math.random() * 200,
+                renewable: comparisonData.rl.renewable - Math.random() * 10,
+                rank: 2
+            };
+            comparisonData.random = {
+                cost: comparisonData.rl.cost + Math.random() * 500 + 200,
+                renewable: comparisonData.rl.renewable - Math.random() * 20,
+                rank: 3
+            };
+            
+            // 更新表格
+            document.getElementById('rl-cost').textContent = '¥' + comparisonData.rl.cost.toFixed(2);
+            document.getElementById('rl-renewable').textContent = comparisonData.rl.renewable.toFixed(1) + '%';
+            document.getElementById('rl-rank').textContent = comparisonData.rl.rank;
+            
+            document.getElementById('rule-cost').textContent = '¥' + comparisonData.rule.cost.toFixed(2);
+            document.getElementById('rule-renewable').textContent = comparisonData.rule.renewable.toFixed(1) + '%';
+            document.getElementById('rule-rank').textContent = comparisonData.rule.rank;
+            
+            document.getElementById('random-cost').textContent = '¥' + comparisonData.random.cost.toFixed(2);
+            document.getElementById('random-renewable').textContent = comparisonData.random.renewable.toFixed(1) + '%';
+            document.getElementById('random-rank').textContent = comparisonData.random.rank;
+            
+            addChatMessage('system', '策略对比分析完成！');
+        }
+        
+        // 模拟运行（一个月周期）
         function startSimulation() {
             if (!isSimulating) return;
             
-            // 模拟状态更新
-            const hour = new Date().getHours();
-            const solarBase = Math.sin((hour - 6) * Math.PI / 12) * 80;
+            // 计算当前模拟时间（基于步数）
+            const daysElapsed = Math.floor(currentStep / (24 * 60));
+            const hoursElapsed = Math.floor((currentStep % (24 * 60)) / 60);
+            const minutesElapsed = currentStep % 60;
+            
+            // 计算当前小时（0-23）
+            const hour = hoursElapsed;
+            const dayOfYear = daysElapsed % 365;
+            
+            // 模拟状态更新（考虑季节变化）
+            const seasonalFactor = 0.7 + 0.3 * Math.sin(2 * Math.PI * (dayOfYear - 80) / 365);
+            const solarBase = Math.sin((hour - 6) * Math.PI / 12) * 80 * seasonalFactor;
             const solar = Math.max(0, solarBase + (Math.random() - 0.5) * 20);
-            const wind = 15 + Math.random() * 20;
+            const wind = (15 + Math.random() * 20) * (0.8 + 0.4 * Math.sin(2 * Math.PI * dayOfYear / 365));
             const load = 80 + Math.sin(hour * Math.PI / 12) * 40 + (Math.random() - 0.5) * 20;
+            
+            // 计算SOC（基于累计充放电）
+            const baseSOC = 0.5;
+            const socVariation = Math.sin(currentStep * 0.01) * 0.2;
+            const batterySOC = Math.max(0.1, Math.min(0.9, baseSOC + socVariation));
+            
+            // 计算累计成本（基于步数）
+            const costPerStep = 0.1;
+            const totalCost = currentStep * costPerStep;
+            
+            // 计算累计可再生能源
+            const renewablePerStep = (solar + wind) / 60;
+            const totalRenewable = currentStep * renewablePerStep;
+            const totalConsumed = currentStep * load / 60;
+            const renewableRatio = totalConsumed > 0 ? totalRenewable / totalConsumed : 0;
             
             const mockState = {
                 timestamp: new Date().toISOString(),
                 components: {
                     solar: { current_power: solar, capacity: 100 },
                     wind: { current_power: wind, capacity: 50 },
-                    battery: { soc: 0.3 + Math.random() * 0.5, capacity: 200, health: 0.98 },
+                    battery: { soc: batterySOC, capacity: 200, health: 0.98 },
                     load: { current: load, base: 80, peak: 150 },
                     grid: { connected: true }
                 },
                 weather: {
-                    temperature: 20 + Math.random() * 10,
+                    temperature: 20 + Math.sin(2 * Math.PI * dayOfYear / 365) * 10 + Math.random() * 5,
                     wind_speed: 5 + Math.random() * 10,
-                    irradiance: solar * 10
+                    irradiance: solar * 10,
+                    cloud_cover: Math.random() * 0.5,
+                    humidity: 50 + Math.random() * 30
                 },
                 price: {
                     buy_price: hour >= 9 && hour < 12 || hour >= 17 && hour < 21 ? 1.2 : 
-                              hour >= 23 || hour < 7 ? 0.4 : 0.8
+                              hour >= 23 || hour < 7 ? 0.4 : 0.8,
+                    sell_price: (hour >= 9 && hour < 12 || hour >= 17 && hour < 21 ? 1.2 : 
+                                 hour >= 23 || hour < 7 ? 0.4 : 0.8) * 0.7,
+                    period: hour >= 9 && hour < 12 || hour >= 17 && hour < 21 ? 'peak' :
+                           hour >= 23 || hour < 7 ? 'valley' : 'normal'
                 },
                 statistics: {
-                    total_cost: Math.random() * 100,
-                    total_renewable_energy: Math.random() * 500,
-                    renewable_ratio: 0.5 + Math.random() * 0.4
+                    total_cost: totalCost,
+                    total_renewable_energy: totalRenewable,
+                    total_energy_consumed: totalConsumed,
+                    renewable_ratio: renewableRatio
                 }
             };
             
-            updateDisplay(mockState);
+            // 更新策略数据
+            strategyData.rl_confidence = 0.5 + Math.sin(currentStep * 0.001) * 0.2;
+            strategyData.epsilon = Math.max(0.01, 1.0 - currentStep / 10000);
+            strategyData.training_steps = currentStep;
+            strategyData.buffer_size = Math.min(100000, currentStep * 10);
+            strategyData.recent_performance = Math.sin(currentStep * 0.01) * 10 + 50;
+            strategyData.current_action = {
+                battery_action: Math.sin(currentStep * 0.02) * 0.5,
+                diesel_on: load > solar + wind + 50
+            };
             
-            // 更新历史数据用于图表
+            updateDisplay(mockState);
+            updateStrategyExecution();
+            
+            // 更新历史数据用于图表（保留最近24小时的数据）
             if (!window.simHistory) {
                 window.simHistory = { solar_power: [], wind_power: [], load_power: [] };
             }
@@ -1408,13 +2152,34 @@
             window.simHistory.wind_power.push(wind);
             window.simHistory.load_power.push(load);
             
-            if (window.simHistory.solar_power.length > 60) {
+            // 只保留最近24小时的数据（1440分钟）
+            const maxHistoryLength = 1440;
+            if (window.simHistory.solar_power.length > maxHistoryLength) {
                 window.simHistory.solar_power.shift();
                 window.simHistory.wind_power.shift();
                 window.simHistory.load_power.shift();
             }
             
             drawChart(window.simHistory);
+            
+            // 更新进度
+            currentStep++;
+            const progress = (currentStep / TOTAL_STEPS * 100).toFixed(1);
+            const daysRemaining = Math.ceil((TOTAL_STEPS - currentStep) / (24 * 60));
+            
+            // 更新标题显示进度
+            const header = document.querySelector('#header h1');
+            if (header) {
+                header.textContent = `🔌 微网数字孪生系统 - 3D可视化控制中心 (${progress}% - 剩余${daysRemaining}天)`;
+            }
+            
+            // 检查是否完成
+            if (currentStep >= TOTAL_STEPS) {
+                isSimulating = false;
+                document.getElementById('btn-play').textContent = '▶️ 开始模拟';
+                addChatMessage('system', `✅ 模拟完成！已完成${SIMULATION_DAYS}天的模拟运行。`);
+                return;
+            }
             
             setTimeout(() => startSimulation(), 1000 / simulationSpeed);
         }
@@ -1436,10 +2201,25 @@
                 drawChart(null);
             }
             
-            // 自动开始模拟
-            setTimeout(() => {
-                document.getElementById('btn-play').click();
-            }, 1000);
+            // 初始化策略显示
+            updateStrategyExecution();
+            
+            // 点击模态框外部关闭
+            document.getElementById('detail-modal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeDetailModal();
+                }
+            });
+            
+            // ESC键关闭模态框
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    closeDetailModal();
+                }
+            });
+            
+            // 显示提示信息
+            addChatMessage('system', `系统已就绪。模拟周期：${SIMULATION_DAYS}天（${TOTAL_STEPS.toLocaleString()}步）。点击3D场景中的设备可查看详细信息。`);
         });
     </script>
 </body>
