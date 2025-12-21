@@ -1,0 +1,23 @@
+# 微网数字孪生系统依赖包
+
+# 核心计算
+numpy>=1.24.0
+pandas>=2.0.0
+
+# 深度学习和强化学习
+torch>=2.0.0
+torchvision>=0.15.0
+
+# 可视化
+plotly>=5.18.0
+matplotlib>=3.7.0
+
+# Web界面
+gradio>=4.10.0
+
+# 数据处理
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+# 工具库
+tqdm>=4.66.0
