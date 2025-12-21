@@ -86,6 +86,21 @@ class StrategyEvaluator:
         self.evaluation_history = []
         self.comparison_results = []
         
+    def _infer_time_step_minutes(self, history: Dict) -> float:
+        """尽量从历史时间戳推断时间步长（分钟）。"""
+        try:
+            ts = history.get('timestamp') or []
+            if len(ts) >= 2:
+                t0 = datetime.fromisoformat(ts[0])
+                t1 = datetime.fromisoformat(ts[1])
+                dt_min = (t1 - t0).total_seconds() / 60.0
+                if dt_min > 0:
+                    return float(dt_min)
+        except Exception:
+            pass
+        # 兼容旧版本：默认按 1 分钟一步
+        return 1.0
+
     def evaluate_episode(self, history: Dict) -> EvaluationMetrics:
         """
         评估单个回合的表现
@@ -100,13 +115,17 @@ class StrategyEvaluator:
         
         if not history.get('solar_power'):
             return metrics
+
+        dt_minutes = self._infer_time_step_minutes(history)
+        dt_hours = dt_minutes / 60.0
         
         n_steps = len(history['solar_power'])
         
-        # 能量计算 (kWh，每分钟数据转换)
-        solar_energy = np.sum(history.get('solar_power', [])) / 60
-        wind_energy = np.sum(history.get('wind_power', [])) / 60
-        load_energy = np.sum(history.get('load_power', [])) / 60
+        # 能量计算 (kWh)
+        # 每步能量 = 功率(kW) * dt_hours
+        solar_energy = float(np.sum(history.get('solar_power', [])) * dt_hours)
+        wind_energy = float(np.sum(history.get('wind_power', [])) * dt_hours)
+        load_energy = float(np.sum(history.get('load_power', [])) * dt_hours)
         
         metrics.renewable_energy_used = solar_energy + wind_energy
         metrics.total_energy_consumed = load_energy
@@ -116,8 +135,8 @@ class StrategyEvaluator:
         
         # 电网交互
         grid_power = np.array(history.get('grid_power', []))
-        metrics.grid_energy_imported = np.sum(grid_power[grid_power > 0]) / 60
-        metrics.grid_energy_exported = -np.sum(grid_power[grid_power < 0]) / 60
+        metrics.grid_energy_imported = float(np.sum(grid_power[grid_power > 0]) * dt_hours)
+        metrics.grid_energy_exported = float(-np.sum(grid_power[grid_power < 0]) * dt_hours)
         
         if load_energy > 0:
             metrics.grid_dependency = metrics.grid_energy_imported / load_energy
@@ -127,9 +146,9 @@ class StrategyEvaluator:
         if len(prices) == len(grid_power):
             for i, (power, price) in enumerate(zip(grid_power, prices)):
                 if power > 0:
-                    metrics.total_cost += power * price / 60
+                    metrics.total_cost += float(power * price * dt_hours)
                 else:
-                    metrics.total_revenue += -power * price * 0.7 / 60  # 售电价格
+                    metrics.total_revenue += float(-power * price * 0.7 * dt_hours)  # 售电价格
         
         metrics.net_cost = metrics.total_cost - metrics.total_revenue
         
@@ -146,9 +165,9 @@ class StrategyEvaluator:
         # 柴油机统计
         diesel_power = history.get('diesel_power', [])
         if diesel_power:
-            diesel_hours = sum(1 for p in diesel_power if p > 0) / 60
+            diesel_hours = sum(1 for p in diesel_power if p > 0) * dt_hours
             metrics.diesel_runtime_hours = diesel_hours
-            metrics.diesel_fuel_consumed = sum(diesel_power) * 0.3 / 60  # L
+            metrics.diesel_fuel_consumed = float(np.sum(diesel_power) * 0.3 * dt_hours)  # L
         
         # CO2排放
         metrics.co2_emissions = (
@@ -160,7 +179,7 @@ class StrategyEvaluator:
         if load_energy > 0:
             total_supply = (metrics.renewable_energy_used + 
                           metrics.grid_energy_imported +
-                          np.sum([max(0, bp) for bp in history.get('battery_power', [])]) / 60)
+                          float(np.sum([max(0, bp) for bp in history.get('battery_power', [])]) * dt_hours))
             metrics.supply_reliability = min(1.0, total_supply / load_energy)
         
         return metrics

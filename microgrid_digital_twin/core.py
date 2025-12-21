@@ -300,12 +300,22 @@ class ElectricityPriceSimulator:
 class MicrogridDigitalTwin:
     """微网数字孪生主类"""
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(
+        self,
+        config: Optional[Dict] = None,
+        *,
+        start_time: Optional[datetime] = None,
+        time_step_minutes: int = 1,
+        seed: int = 42,
+    ):
         """
         初始化微网数字孪生系统
         
         Args:
             config: 配置字典
+            start_time: 仿真起始时间（默认当前时间）
+            time_step_minutes: 时间步长（分钟，默认1）
+            seed: 随机种子（用于天气等随机过程，默认42）
         """
         config = config or {}
         
@@ -318,12 +328,24 @@ class MicrogridDigitalTwin:
         self.grid = GridConnection(**config.get('grid', {}))
         
         # 模拟器
-        self.weather = WeatherSimulator()
+        self.weather = WeatherSimulator(seed=seed)
         self.price_sim = ElectricityPriceSimulator()
         
         # 时间
-        self.current_time = datetime.now()
-        self.time_step = timedelta(minutes=1)
+        if time_step_minutes <= 0:
+            raise ValueError("time_step_minutes must be > 0")
+        self.current_time = start_time or datetime.now()
+        self.time_step = timedelta(minutes=time_step_minutes)
+        self.time_step_minutes = float(time_step_minutes)
+        self.seed = seed
+
+        # 缓存：保证同一时刻多次读取一致（避免天气随机过程被重复消耗）
+        self._cached_time: Optional[datetime] = None
+        self._cached_weather: Optional[Dict[str, float]] = None
+        self._cached_price: Optional[Dict[str, float]] = None
+        self._cached_load_power: Optional[float] = None
+        self._cached_solar_power: Optional[float] = None
+        self._cached_wind_power: Optional[float] = None
         
         # 历史数据
         self.history = {
@@ -338,13 +360,72 @@ class MicrogridDigitalTwin:
             'electricity_price': [],
             'weather': [],
             'total_cost': [],
-            'renewable_ratio': []
+            'renewable_ratio': [],
+            # 记录策略执行（用于界面展示策略执行情况）
+            'battery_action': [],
+            'diesel_on': []
         }
         
         # 累计统计
         self.total_cost = 0.0
         self.total_renewable_energy = 0.0
         self.total_energy_consumed = 0.0
+
+    def _invalidate_cache(self) -> None:
+        self._cached_time = None
+        self._cached_weather = None
+        self._cached_price = None
+        self._cached_load_power = None
+        self._cached_solar_power = None
+        self._cached_wind_power = None
+
+    def _get_exogenous(self) -> Tuple[Dict[str, float], Dict[str, float], float, float, float]:
+        """
+        获取当前时刻外生量（天气/电价/负荷/光伏/风电），并做缓存确保一致。
+        """
+        if self._cached_time == self.current_time and self._cached_weather is not None:
+            return (
+                self._cached_weather,
+                self._cached_price or self.price_sim.get_price(self.current_time.hour),
+                float(self._cached_load_power or 0.0),
+                float(self._cached_solar_power or 0.0),
+                float(self._cached_wind_power or 0.0),
+            )
+
+        weather = self.weather.get_conditions(self.current_time)
+        price = self.price_sim.get_price(self.current_time.hour)
+
+        solar_power = self.solar.generate_power(weather['irradiance'], weather['temperature'])
+        wind_power = self.wind.generate_power(weather['wind_speed'])
+        load_power = self.load.get_load(self.current_time.hour)
+
+        self._cached_time = self.current_time
+        self._cached_weather = weather
+        self._cached_price = price
+        self._cached_load_power = load_power
+        self._cached_solar_power = solar_power
+        self._cached_wind_power = wind_power
+
+        return weather, price, load_power, solar_power, wind_power
+
+    def get_agent_state(self) -> Dict[str, float]:
+        """
+        给策略/智能体用的扁平状态（不推进时间），保证与当前时刻一致。
+        """
+        weather, price, load_power, solar_power, wind_power = self._get_exogenous()
+        return {
+            'time_hour': float(self.current_time.hour),
+            'time_minute': float(self.current_time.minute),
+            'solar_power': float(solar_power),
+            'wind_power': float(wind_power),
+            'load_power': float(load_power),
+            'battery_soc': float(self.battery.soc),
+            'electricity_price': float(price['buy_price']),
+            'price_period': price['period'],
+            'wind_speed': float(weather['wind_speed']),
+            'irradiance': float(weather['irradiance']),
+            'temperature': float(weather['temperature']),
+        }
         
     def step(self, action: Optional[Dict] = None) -> Dict:
         """
@@ -360,31 +441,23 @@ class MicrogridDigitalTwin:
         """
         action = action or {}
         
-        # 获取天气和电价
-        weather = self.weather.get_conditions(self.current_time)
-        price = self.price_sim.get_price(self.current_time.hour)
-        
-        # 可再生能源发电
-        solar_power = self.solar.generate_power(
-            weather['irradiance'], 
-            weather['temperature']
-        )
-        wind_power = self.wind.generate_power(weather['wind_speed'])
+        # 获取天气、电价、负荷与可再生出力（缓存一致）
+        weather, price, load_power, solar_power, wind_power = self._get_exogenous()
         renewable_power = solar_power + wind_power
         
-        # 负荷
-        load_power = self.load.get_load(self.current_time.hour)
+        # 本步持续时长（小时）
+        dt_hours = self.time_step.total_seconds() / 3600.0
         
         # 电池控制
         battery_action = action.get('battery_action', 0)
         battery_power = 0.0
         if battery_action > 0:  # 充电
             power_to_charge = abs(battery_action) * self.battery.max_charge_rate
-            _, energy = self.battery.charge(power_to_charge, 1/60)
+            _, energy = self.battery.charge(power_to_charge, dt_hours)
             battery_power = -power_to_charge  # 负值表示消耗功率
         elif battery_action < 0:  # 放电
             power_to_discharge = abs(battery_action) * self.battery.max_discharge_rate
-            _, energy = self.battery.discharge(power_to_discharge, 1/60)
+            _, energy = self.battery.discharge(power_to_discharge, dt_hours)
             battery_power = power_to_discharge  # 正值表示提供功率
         
         # 柴油机控制
@@ -400,9 +473,9 @@ class MicrogridDigitalTwin:
         
         # 计算成本
         if grid_power > 0:
-            cost = grid_power * price['buy_price'] / 60  # 每分钟成本
+            cost = grid_power * price['buy_price'] * dt_hours
         else:
-            cost = grid_power * price['sell_price'] / 60  # 售电收入（负成本）
+            cost = grid_power * price['sell_price'] * dt_hours  # 售电收入（负成本）
         
         # 添加柴油成本
         diesel_cost = fuel * 8.0  # 假设柴油8元/升
@@ -411,8 +484,8 @@ class MicrogridDigitalTwin:
         self.total_cost += cost
         
         # 更新统计
-        self.total_renewable_energy += (solar_power + wind_power) / 60
-        self.total_energy_consumed += load_power / 60
+        self.total_renewable_energy += (solar_power + wind_power) * dt_hours
+        self.total_energy_consumed += load_power * dt_hours
         
         # 计算可再生能源比例
         if self.total_energy_consumed > 0:
@@ -423,6 +496,7 @@ class MicrogridDigitalTwin:
         # 记录历史
         state = {
             'timestamp': self.current_time.isoformat(),
+            'time_step_minutes': self.time_step_minutes,
             'solar_power': solar_power,
             'wind_power': wind_power,
             'load_power': load_power,
@@ -436,6 +510,8 @@ class MicrogridDigitalTwin:
             'cost': cost,
             'total_cost': self.total_cost,
             'renewable_ratio': renewable_ratio,
+            'battery_action': float(battery_action),
+            'diesel_on': bool(diesel_on),
             'power_balance': {
                 'generation': renewable_power + diesel_power,
                 'consumption': load_power,
@@ -453,26 +529,25 @@ class MicrogridDigitalTwin:
         
         # 时间推进
         self.current_time += self.time_step
+        self._invalidate_cache()
         
         return state
     
     def get_state(self) -> Dict:
         """获取当前系统状态"""
-        weather = self.weather.get_conditions(self.current_time)
-        price = self.price_sim.get_price(self.current_time.hour)
+        weather, price, load_power, solar_power, wind_power = self._get_exogenous()
         
         return {
             'timestamp': self.current_time.isoformat(),
+            'time_step_minutes': self.time_step_minutes,
             'components': {
                 'solar': {
                     'capacity': self.solar.capacity_kw,
-                    'current_power': self.solar.generate_power(
-                        weather['irradiance'], weather['temperature']
-                    )
+                    'current_power': solar_power
                 },
                 'wind': {
                     'capacity': self.wind.capacity_kw,
-                    'current_power': self.wind.generate_power(weather['wind_speed'])
+                    'current_power': wind_power
                 },
                 'battery': {
                     'capacity': self.battery.capacity_kwh,
@@ -485,7 +560,7 @@ class MicrogridDigitalTwin:
                     'run_hours': self.diesel.run_hours
                 },
                 'load': {
-                    'current': self.load.get_load(self.current_time.hour, 0),
+                    'current': float(load_power),
                     'base': self.load.base_load,
                     'peak': self.load.peak_load
                 },
@@ -515,6 +590,7 @@ class MicrogridDigitalTwin:
         self.total_energy_consumed = 0.0
         self.current_time = datetime.now()
         self.history = {key: [] for key in self.history}
+        self._invalidate_cache()
         
     def get_observation(self) -> np.ndarray:
         """获取强化学习观测向量"""

@@ -7,14 +7,133 @@
 """
 
 import json
-from typing import Dict, List, Optional
-from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
 import html
 import base64
 
+import numpy as np
 
-def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
-                                    width: int = 1200, height: int = 800) -> str:
+from .core import MicrogridDigitalTwin
+from .rl_agent import RuleBasedAgent
+from .evaluation import StrategyEvaluator
+
+
+def _downsample_series(values: List[float], max_points: int = 3000) -> Tuple[List[float], int]:
+    """
+    下采样序列，避免1个月数据嵌入HTML过大。
+    Returns:
+        (downsampled_values, stride)
+    """
+    if not values:
+        return [], 1
+    n = len(values)
+    if n <= max_points:
+        return values, 1
+    stride = int(np.ceil(n / max_points))
+    return values[::stride], stride
+
+
+def _downsample_history(history: Dict, max_points: int = 3000) -> Dict:
+    """对history里常用序列下采样（时间戳对齐）。"""
+    ts = history.get('timestamp', [])
+    if not ts:
+        return history
+
+    # 找到最长序列长度
+    n = len(ts)
+    if n <= max_points:
+        return history
+
+    stride = int(np.ceil(n / max_points))
+    out = {}
+    for k, v in history.items():
+        if isinstance(v, list) and len(v) == n:
+            out[k] = v[::stride]
+        else:
+            out[k] = v
+    out['_downsample_stride'] = stride
+    return out
+
+
+def run_strategies_for_one_month(
+    *,
+    days: int = 30,
+    time_step_minutes: int = 15,
+    seed: int = 42,
+    start_time: Optional[datetime] = None,
+) -> Dict:
+    """
+    运行一个月周期的多策略仿真，并返回用于前端展示的数据：
+    - execution: 各策略的时序（功率、SOC、动作等）
+    - comparison: 指标对比（净成本/可再生比例/电网依赖/CO2等）
+    """
+    if days <= 0:
+        raise ValueError("days must be > 0")
+    if time_step_minutes <= 0:
+        raise ValueError("time_step_minutes must be > 0")
+
+    start_time = start_time or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    steps = int((days * 24 * 60) / time_step_minutes)
+
+    def make_dt() -> MicrogridDigitalTwin:
+        return MicrogridDigitalTwin(
+            start_time=start_time,
+            time_step_minutes=time_step_minutes,
+            seed=seed,
+        )
+
+    # 策略1：无控制基线
+    dt_baseline = make_dt()
+    for _ in range(steps):
+        dt_baseline.step({'battery_action': 0.0, 'diesel_on': False})
+
+    # 策略2：规则策略
+    dt_rule = make_dt()
+    rule_agent = RuleBasedAgent()
+    for _ in range(steps):
+        agent_state = dt_rule.get_agent_state()
+        action = rule_agent.select_action(agent_state)
+        dt_rule.step(action)
+
+    histories = {
+        'baseline': dt_baseline.history,
+        'rule': dt_rule.history,
+    }
+
+    evaluator = StrategyEvaluator()
+    comparison = evaluator.compare_strategies(histories)
+
+    # 下采样执行曲线，用于前端快速渲染
+    execution = {
+        name: _downsample_history(hist, max_points=3000) for name, hist in histories.items()
+    }
+
+    return {
+        'meta': {
+            'days': days,
+            'time_step_minutes': time_step_minutes,
+            'seed': seed,
+            'start_time': start_time.isoformat(),
+            'steps': steps,
+        },
+        'execution': execution,
+        'comparison': comparison,
+        'strategy_labels': {
+            'baseline': '基线(无控制)',
+            'rule': '规则策略',
+        },
+    }
+
+
+def generate_3d_visualization_html(
+    state: Dict = None,
+    history: Dict = None,
+    *,
+    strategy_payload: Optional[Dict] = None,
+    width: int = 1200,
+    height: int = 800,
+) -> str:
     """
     生成完整的3D可视化HTML
     
@@ -31,6 +150,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
     # 准备数据
     state_json = json.dumps(state or {})
     history_json = json.dumps(history or {})
+    strategy_json = json.dumps(strategy_payload or {})
     
     html_template = f'''
 <!DOCTYPE html>
@@ -409,6 +529,97 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         .glow {{
             box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
         }}
+
+        /* 详情面板 */
+        #detail-panel {{
+            position: absolute;
+            z-index: 120;
+            top: 80px;
+            left: 320px;
+            width: 360px;
+            max-width: calc(100vw - 700px);
+            background: rgba(15, 52, 96, 0.92);
+            border-radius: 15px;
+            padding: 16px;
+            border: 1px solid rgba(100, 200, 255, 0.25);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+            display: none;
+        }}
+        #detail-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+        }}
+        #detail-title {{
+            font-size: 1.05em;
+            color: #00d4ff;
+            font-weight: 600;
+        }}
+        #detail-close {{
+            border: none;
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+        #detail-content {{
+            max-height: 360px;
+            overflow: auto;
+        }}
+
+        /* 策略面板 */
+        #strategy-panel {{
+            position: absolute;
+            z-index: 110;
+            top: 420px;
+            right: 20px;
+            width: 280px;
+            background: rgba(15, 52, 96, 0.88);
+            border-radius: 15px;
+            padding: 15px;
+            border: 1px solid rgba(100, 200, 255, 0.2);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }}
+        .form-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 8px 0;
+            font-size: 0.9em;
+            color: #ddd;
+        }}
+        select {{
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(100,200,255,0.25);
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+            outline: none;
+        }}
+        .toggle {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }}
+        .toggle input {{
+            accent-color: #00d4ff;
+        }}
+        #strategy-execution, #strategy-comparison {{
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.12);
+        }}
     </style>
 </head>
 <body>
@@ -472,6 +683,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                 <span class="status-value good" id="renewable-ratio">--%</span>
             </div>
         </div>
+
+        <!-- Detail Panel (click components to open) -->
+        <div id="detail-panel" class="overlay">
+            <div id="detail-header">
+                <div id="detail-title">🔎 设备详情</div>
+                <button id="detail-close">关闭</button>
+            </div>
+            <div id="detail-content"></div>
+        </div>
         
         <!-- Control Panel -->
         <div id="control-panel" class="overlay">
@@ -524,6 +744,31 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                     🔄 重置系统
                 </button>
             </div>
+        </div>
+
+        <!-- Strategy Panel -->
+        <div id="strategy-panel" class="overlay">
+            <div class="panel-title">📌 策略展示</div>
+            <div class="form-row">
+                <div style="flex:1;">
+                    <div style="font-size:12px;color:#aaa;margin-bottom:6px;">选择策略</div>
+                    <select id="strategy-select"></select>
+                </div>
+            </div>
+            <div class="form-row">
+                <label class="toggle">
+                    <input type="checkbox" id="toggle-execution" checked>
+                    <span>显示策略执行情况</span>
+                </label>
+            </div>
+            <div class="form-row">
+                <label class="toggle">
+                    <input type="checkbox" id="toggle-comparison" checked>
+                    <span>显示策略对比情况</span>
+                </label>
+            </div>
+            <div id="strategy-execution"></div>
+            <div id="strategy-comparison"></div>
         </div>
         
         <!-- Metrics Grid -->
@@ -598,6 +843,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         // 初始状态数据
         let systemState = {state_json};
         let historyData = {history_json};
+        let strategyPayload = {strategy_json};
         
         // 全局变量
         let scene, camera, renderer, controls;
@@ -607,6 +853,8 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         let simulationSpeed = 1;
         let dieselOn = false;
         let autoMode = true;
+        let activeStrategy = 'rule';
+        let playbackIndex = 0;
         
         // 初始化Three.js场景
         function initScene() {{
@@ -647,9 +895,124 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             
             // 创建电力流动粒子
             createPowerFlowSystem();
+
+            // 交互拾取（点击部件进入详情）
+            setupPicking();
             
             // 窗口大小调整
             window.addEventListener('resize', onWindowResize);
+        }}
+
+        // ===========================
+        // 点击拾取与详情面板（轻量版）
+        // ===========================
+        let raycaster, mouse;
+        const pickables = [];
+
+        function setupPicking() {{
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // 收集可点击对象
+            solarPanels.forEach(p => {{
+                p.userData = {{ component: 'solar' }};
+                pickables.push(p);
+            }});
+            windTurbines.forEach(t => {{
+                t.userData = {{ component: 'wind' }};
+                pickables.push(t);
+            }});
+            if (batterySystem) {{
+                batterySystem.children.forEach(c => {{
+                    c.userData = {{ component: 'battery' }};
+                    pickables.push(c);
+                }});
+            }}
+            if (loadCenter) {{
+                loadCenter.children.forEach(c => {{
+                    c.userData = {{ component: 'load' }};
+                    pickables.push(c);
+                }});
+            }}
+            if (gridConnection) {{
+                gridConnection.children.forEach(c => {{
+                    c.userData = {{ component: 'grid' }};
+                    pickables.push(c);
+                }});
+            }}
+
+            renderer.domElement.addEventListener('click', onCanvasClick);
+        }}
+
+        function onCanvasClick(event) {{
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(pickables, true);
+            if (intersects.length > 0) {{
+                const comp = intersects[0].object.userData?.component;
+                if (comp) openDetailPanel(comp);
+            }}
+        }}
+
+        function openDetailPanel(component) {{
+            const panel = document.getElementById('detail-panel');
+            panel.style.display = 'block';
+            document.getElementById('detail-title').textContent = '🔎 设备详情 - ' + componentName(component);
+
+            const snapshot = getPlaybackSnapshot();
+            const html = buildDetailHtml(component, snapshot);
+            document.getElementById('detail-content').innerHTML = html;
+        }}
+
+        function componentName(c) {{
+            return {{
+                solar: '光伏',
+                wind: '风电',
+                battery: '储能',
+                load: '负荷',
+                grid: '电网'
+            }}[c] || c;
+        }}
+
+        function buildDetailHtml(component, snap) {{
+            if (!snap) return '<div style="color:#aaa;">暂无数据</div>';
+            const v = (x, unit) => (x === null || x === undefined) ? '--' : (Number(x).toFixed(2) + (unit||''));
+
+            if (component === 'battery') {{
+                return `
+                    <div class="status-item"><span class="status-label">SOC</span><span class="status-value">${{v(snap.battery_soc*100, '%')}}</span></div>
+                    <div class="status-item"><span class="status-label">动作</span><span class="status-value">${{v(snap.battery_action*100, '%')}}</span></div>
+                    <div class="status-item"><span class="status-label">电网功率</span><span class="status-value">${{v(snap.grid_power,' kW')}}</span></div>
+                `;
+            }}
+            if (component === 'solar') {{
+                return `
+                    <div class="status-item"><span class="status-label">出力</span><span class="status-value">${{v(snap.solar_power,' kW')}}</span></div>
+                    <div class="status-item"><span class="status-label">辐照度</span><span class="status-value">${{v(snap.weather?.irradiance,' W/m²')}}</span></div>
+                    <div class="status-item"><span class="status-label">温度</span><span class="status-value">${{v(snap.weather?.temperature,' °C')}}</span></div>
+                `;
+            }}
+            if (component === 'wind') {{
+                return `
+                    <div class="status-item"><span class="status-label">出力</span><span class="status-value">${{v(snap.wind_power,' kW')}}</span></div>
+                    <div class="status-item"><span class="status-label">风速</span><span class="status-value">${{v(snap.weather?.wind_speed,' m/s')}}</span></div>
+                `;
+            }}
+            if (component === 'load') {{
+                return `
+                    <div class="status-item"><span class="status-label">负荷</span><span class="status-value">${{v(snap.load_power,' kW')}}</span></div>
+                    <div class="status-item"><span class="status-label">电价</span><span class="status-value">${{v(snap.electricity_price,' ¥/kWh')}}</span></div>
+                `;
+            }}
+            if (component === 'grid') {{
+                return `
+                    <div class="status-item"><span class="status-label">电网功率</span><span class="status-value">${{v(snap.grid_power,' kW')}}</span></div>
+                    <div class="status-item"><span class="status-label">累计成本</span><span class="status-value">${{v(snap.total_cost,' ¥')}}</span></div>
+                `;
+            }}
+            return '<div style="color:#aaa;">暂无详情</div>';
         }}
         
         function setupLighting() {{
@@ -1183,6 +1546,110 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                     date.toLocaleString('zh-CN');
             }}
         }}
+
+        // ===========================
+        // 策略面板：执行/对比可选显示
+        // ===========================
+        function setupStrategyPanel() {{
+            const hasPayload = strategyPayload && Object.keys(strategyPayload).length > 0;
+            if (!hasPayload) return;
+
+            const select = document.getElementById('strategy-select');
+            select.innerHTML = '';
+            const labels = strategyPayload.strategy_labels || {{}};
+            Object.keys(strategyPayload.execution || {{}}).forEach(k => {{
+                const opt = document.createElement('option');
+                opt.value = k;
+                opt.textContent = labels[k] || k;
+                select.appendChild(opt);
+            }});
+            activeStrategy = select.value || activeStrategy;
+            select.addEventListener('change', () => {{
+                activeStrategy = select.value;
+                playbackIndex = 0;
+                renderStrategyComparison();
+            }});
+
+            document.getElementById('toggle-execution').addEventListener('change', () => {{
+                document.getElementById('strategy-execution').style.display =
+                    document.getElementById('toggle-execution').checked ? 'block' : 'none';
+            }});
+            document.getElementById('toggle-comparison').addEventListener('change', () => {{
+                document.getElementById('strategy-comparison').style.display =
+                    document.getElementById('toggle-comparison').checked ? 'block' : 'none';
+            }});
+
+            renderStrategyComparison();
+        }}
+
+        function renderStrategyComparison() {{
+            const container = document.getElementById('strategy-comparison');
+            const cmp = strategyPayload.comparison || {{}};
+            const labels = strategyPayload.strategy_labels || {{}};
+            const keys = Object.keys(strategyPayload.execution || {{}});
+            if (keys.length === 0) {{
+                container.innerHTML = '<div style="color:#aaa;">暂无策略数据</div>';
+                return;
+            }}
+            const rows = keys.map(k => {{
+                const m = cmp[k] || {{}};
+                const cost = m.cost_metrics?.net_cost ?? '--';
+                const ren = m.energy_metrics?.renewable_ratio ?? '--';
+                const grid = m.grid_metrics?.grid_dependency ?? '--';
+                const co2 = m.environmental_metrics?.co2_emissions ?? '--';
+                return `
+                    <tr>
+                        <td>${{labels[k] || k}}</td>
+                        <td>${{cost}}</td>
+                        <td>${{ren}}%</td>
+                        <td>${{grid}}%</td>
+                        <td>${{co2}}</td>
+                    </tr>`;
+            }}).join('');
+            container.innerHTML = `
+                <div style="font-weight:600;color:#00d4ff;margin-bottom:8px;">策略对比（可选显示）</div>
+                <div style="font-size:12px;color:#aaa;margin-bottom:8px;">
+                    周期：${{strategyPayload.meta?.days || '--'}}天，步长：${{strategyPayload.meta?.time_step_minutes || '--'}}分钟
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead>
+                        <tr style="color:#aaa;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">
+                            <th style="padding:6px 4px;">策略</th>
+                            <th style="padding:6px 4px;">净成本(¥)</th>
+                            <th style="padding:6px 4px;">可再生(%)</th>
+                            <th style="padding:6px 4px;">电网依赖(%)</th>
+                            <th style="padding:6px 4px;">CO2(kg)</th>
+                        </tr>
+                    </thead>
+                    <tbody>${{rows}}</tbody>
+                </table>
+            `;
+        }}
+
+        function getPlaybackSeries() {{
+            return (strategyPayload.execution || {{}})[activeStrategy] || null;
+        }}
+
+        function getPlaybackSnapshot() {{
+            const s = getPlaybackSeries();
+            if (!s || !s.timestamp || s.timestamp.length === 0) return null;
+            const i = Math.min(playbackIndex, s.timestamp.length - 1);
+            return {{
+                timestamp: s.timestamp[i],
+                solar_power: s.solar_power?.[i] ?? null,
+                wind_power: s.wind_power?.[i] ?? null,
+                load_power: s.load_power?.[i] ?? null,
+                battery_soc: s.battery_soc?.[i] ?? null,
+                grid_power: s.grid_power?.[i] ?? null,
+                diesel_power: s.diesel_power?.[i] ?? null,
+                electricity_price: s.electricity_price?.[i] ?? null,
+                total_cost: s.total_cost?.[i] ?? null,
+                renewable_ratio: s.renewable_ratio?.[i] ?? null,
+                battery_action: s.battery_action?.[i] ?? null,
+                diesel_on: s.diesel_on?.[i] ?? null,
+                weather: s.weather?.[i] ?? null
+            }};
+        }}
         
         // 简单图表绘制
         function drawChart(history) {{
@@ -1369,6 +1836,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                 document.getElementById('btn-play').textContent = '▶️ 开始模拟';
                 addChatMessage('system', '🔄 系统已重置');
             }});
+
+            // 详情面板关闭
+            const closeBtn = document.getElementById('detail-close');
+            if (closeBtn) {{
+                closeBtn.addEventListener('click', function() {{
+                    const panel = document.getElementById('detail-panel');
+                    if (panel) panel.style.display = 'none';
+                }});
+            }}
             
             // 聊天发送
             document.getElementById('send-btn').addEventListener('click', function() {{
@@ -1399,57 +1875,57 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         // 模拟运行
         function startSimulation() {{
             if (!isSimulating) return;
-            
-            // 模拟状态更新
-            const hour = new Date().getHours();
-            const solarBase = Math.sin((hour - 6) * Math.PI / 12) * 80;
-            const solar = Math.max(0, solarBase + (Math.random() - 0.5) * 20);
-            const wind = 15 + Math.random() * 20;
-            const load = 80 + Math.sin(hour * Math.PI / 12) * 40 + (Math.random() - 0.5) * 20;
-            
-            const mockState = {{
-                timestamp: new Date().toISOString(),
+
+            const snap = getPlaybackSnapshot();
+            if (!snap) {{
+                // 回退到旧数据：如果没有策略payload，则继续用原historyData（或显示空）
+                setTimeout(() => startSimulation(), 1000 / simulationSpeed);
+                return;
+            }}
+
+            // 把snap映射为updateDisplay需要的结构
+            const mapped = {{
+                timestamp: snap.timestamp,
                 components: {{
-                    solar: {{ current_power: solar, capacity: 100 }},
-                    wind: {{ current_power: wind, capacity: 50 }},
-                    battery: {{ soc: 0.3 + Math.random() * 0.5, capacity: 200, health: 0.98 }},
-                    load: {{ current: load, base: 80, peak: 150 }},
+                    solar: {{ current_power: snap.solar_power || 0, capacity: 100 }},
+                    wind: {{ current_power: snap.wind_power || 0, capacity: 50 }},
+                    battery: {{ soc: snap.battery_soc || 0.5, capacity: 200, health: 0.98 }},
+                    load: {{ current: snap.load_power || 0, base: 80, peak: 150 }},
                     grid: {{ connected: true }}
                 }},
-                weather: {{
-                    temperature: 20 + Math.random() * 10,
-                    wind_speed: 5 + Math.random() * 10,
-                    irradiance: solar * 10
-                }},
-                price: {{
-                    buy_price: hour >= 9 && hour < 12 || hour >= 17 && hour < 21 ? 1.2 : 
-                              hour >= 23 || hour < 7 ? 0.4 : 0.8
-                }},
+                weather: snap.weather || {{}},
+                price: {{ buy_price: snap.electricity_price || 0.8 }},
                 statistics: {{
-                    total_cost: Math.random() * 100,
-                    total_renewable_energy: Math.random() * 500,
-                    renewable_ratio: 0.5 + Math.random() * 0.4
+                    total_cost: snap.total_cost || 0,
+                    total_renewable_energy: 0,
+                    renewable_ratio: snap.renewable_ratio || 0
                 }}
             }};
-            
-            updateDisplay(mockState);
-            
-            // 更新历史数据用于图表
-            if (!window.simHistory) {{
-                window.simHistory = {{ solar_power: [], wind_power: [], load_power: [] }};
+            updateDisplay(mapped);
+
+            // 图表（沿用power-chart）
+            const s = getPlaybackSeries();
+            if (s) {{
+                drawChart({{ solar_power: s.solar_power || [], wind_power: s.wind_power || [], load_power: s.load_power || [] }});
             }}
-            window.simHistory.solar_power.push(solar);
-            window.simHistory.wind_power.push(wind);
-            window.simHistory.load_power.push(load);
-            
-            if (window.simHistory.solar_power.length > 60) {{
-                window.simHistory.solar_power.shift();
-                window.simHistory.wind_power.shift();
-                window.simHistory.load_power.shift();
+
+            // 策略执行区：显示当前动作
+            const execBox = document.getElementById('strategy-execution');
+            if (execBox && document.getElementById('toggle-execution').checked) {{
+                const ba = snap.battery_action === null ? '--' : (snap.battery_action * 100).toFixed(0) + '%';
+                const ds = snap.diesel_on ? '开启' : '关闭';
+                execBox.innerHTML = `
+                    <div style="font-weight:600;color:#00d4ff;margin-bottom:8px;">策略执行（${{(strategyPayload.strategy_labels||{{}})[activeStrategy] || activeStrategy}}）</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:8px;">时间：${{snap.timestamp || '--'}}</div>
+                    <div class="status-item"><span class="status-label">电池动作</span><span class="status-value">${{ba}}</span></div>
+                    <div class="status-item"><span class="status-label">柴油机</span><span class="status-value">${{ds}}</span></div>
+                `;
             }}
-            
-            drawChart(window.simHistory);
-            
+
+            playbackIndex += Math.max(1, Math.round(simulationSpeed));
+            const maxLen = getPlaybackSeries()?.timestamp?.length || 0;
+            if (maxLen > 0 && playbackIndex >= maxLen) playbackIndex = maxLen - 1;
+
             setTimeout(() => startSimulation(), 1000 / simulationSpeed);
         }}
         
@@ -1458,6 +1934,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             initScene();
             animate();
             setupControls();
+            setupStrategyPanel();
             
             // 初始显示
             if (systemState && Object.keys(systemState).length > 0) {{
@@ -1494,12 +1971,25 @@ class Visualization3D:
         """生成3D可视化HTML"""
         state = None
         history = None
+        strategy_payload = None
         
         if self.digital_twin:
             state = self.digital_twin.get_state()
             history = self.digital_twin.history
+
+        # 默认：按“1个月周期”生成可选展示的策略执行/对比数据
+        # 为避免HTML过大，这里默认采用15分钟步长（约2880点/策略）
+        try:
+            seed = getattr(self.digital_twin, 'seed', 42) if self.digital_twin else 42
+            strategy_payload = run_strategies_for_one_month(days=30, time_step_minutes=15, seed=seed)
+        except Exception:
+            strategy_payload = {}
         
-        self.html_content = generate_3d_visualization_html(state, history)
+        self.html_content = generate_3d_visualization_html(
+            state,
+            history,
+            strategy_payload=strategy_payload,
+        )
         return self.html_content
     
     def display_in_notebook(self):
