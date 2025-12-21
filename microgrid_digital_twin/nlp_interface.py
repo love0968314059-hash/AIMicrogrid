@@ -26,6 +26,8 @@ class CommandParser:
             'query_power': [
                 r'(查看|显示|查询|获取).*(功率|发电|出力|power)',
                 r'(光伏|风电|太阳能|风力).*(功率|发电|多少)',
+                r'(当前|现在).*(功率|发电)',
+                r'(功率|发电).*(多少|情况|怎么样)',
                 r'(solar|wind|power).*(output|generation|how much)',
             ],
             'query_battery': [
@@ -234,28 +236,78 @@ class NLPInterface:
         components = state['components']
         weather = state['weather']
         stats = state['statistics']
+        price = state['price']
+        
+        # 计算功率平衡
+        solar_power = components['solar']['current_power']
+        wind_power = components['wind']['current_power']
+        load_power = components['load']['current']
+        renewable_total = solar_power + wind_power
+        power_balance = renewable_total - load_power
         
         response = []
         response.append("📊 【微网系统当前状态】")
         response.append(f"⏰ 时间: {state['timestamp']}")
         response.append("")
+        
+        # 发电设备
         response.append("🔋 发电设备:")
-        response.append(f"  ☀️ 光伏: {components['solar']['current_power']:.1f} kW")
-        response.append(f"  💨 风电: {components['wind']['current_power']:.1f} kW")
+        response.append(f"  ☀️ 光伏: {solar_power:.1f} kW (额定 {components['solar']['capacity']:.0f} kW)")
+        response.append(f"  💨 风电: {wind_power:.1f} kW (额定 {components['wind']['capacity']:.0f} kW)")
+        response.append(f"  🌿 可再生总出力: {renewable_total:.1f} kW")
         response.append("")
+        
+        # 储能系统
+        battery_soc = components['battery']['soc']
+        soc_status = self._get_soc_status_icon(battery_soc)
         response.append("🔌 储能系统:")
-        response.append(f"  电池SOC: {components['battery']['soc']*100:.1f}%")
+        response.append(f"  电池SOC: {battery_soc*100:.1f}% {soc_status}")
+        response.append(f"  可用容量: {battery_soc * components['battery']['capacity']:.1f} kWh")
         response.append(f"  健康度: {components['battery']['health']*100:.1f}%")
         response.append("")
+        
+        # 负荷与电网
         response.append("📈 负荷与电网:")
-        response.append(f"  当前负荷: {components['load']['current']:.1f} kW")
-        response.append(f"  电网状态: {'已连接' if components['grid']['connected'] else '离网'}")
+        response.append(f"  当前负荷: {load_power:.1f} kW")
+        response.append(f"  负载率: {load_power/components['load']['peak']*100:.1f}%")
+        response.append(f"  电网状态: {'✅ 已连接' if components['grid']['connected'] else '⚠️ 离网'}")
         response.append("")
+        
+        # 功率流分析
+        response.append("⚡ 功率流分析:")
+        if power_balance > 0:
+            response.append(f"  状态: 🟢 功率盈余 +{power_balance:.1f} kW")
+            response.append(f"  建议: 可向电池充电或向电网售电")
+        elif power_balance < -10:
+            response.append(f"  状态: 🔴 功率缺口 {power_balance:.1f} kW")
+            response.append(f"  建议: 需要电池放电或从电网购电")
+        else:
+            response.append(f"  状态: 🟡 基本平衡 {power_balance:+.1f} kW")
+        response.append(f"  自给率: {min(100, renewable_total/max(load_power, 1)*100):.1f}%")
+        response.append("")
+        
+        # 电价信息
+        period_names = {'peak': '🔴 高峰', 'normal': '🟡 平段', 'valley': '🟢 低谷'}
         response.append("💰 运行统计:")
+        response.append(f"  当前电价: ¥{price['buy_price']:.2f}/kWh ({period_names.get(price['period'], price['period'])})")
         response.append(f"  累计成本: ¥{stats['total_cost']:.2f}")
         response.append(f"  可再生比例: {stats['renewable_ratio']*100:.1f}%")
+        response.append(f"  清洁发电: {stats['total_renewable_energy']:.1f} kWh")
         
         return "\n".join(response)
+    
+    def _get_soc_status_icon(self, soc: float) -> str:
+        """获取SOC状态图标"""
+        if soc >= 0.8:
+            return "⚡ 充足"
+        elif soc >= 0.5:
+            return "✅ 正常"
+        elif soc >= 0.3:
+            return "⚠️ 偏低"
+        elif soc >= 0.15:
+            return "🔶 警告"
+        else:
+            return "🔴 危险"
     
     def _handle_query_power(self, params: Dict) -> str:
         """处理功率查询"""
@@ -264,19 +316,62 @@ class NLPInterface:
         
         state = self.digital_twin.get_state()
         components = state['components']
+        weather = state['weather']
+        
+        solar_power = components['solar']['current_power']
+        wind_power = components['wind']['current_power']
+        solar_capacity = components['solar']['capacity']
+        wind_capacity = components['wind']['capacity']
+        load_power = components['load']['current']
+        
+        total_renewable = solar_power + wind_power
+        total_capacity = solar_capacity + wind_capacity
         
         response = []
-        response.append("⚡ 【功率信息】")
-        response.append(f"☀️ 光伏发电: {components['solar']['current_power']:.1f} kW")
-        response.append(f"   额定容量: {components['solar']['capacity']:.1f} kW")
-        response.append(f"💨 风力发电: {components['wind']['current_power']:.1f} kW")
-        response.append(f"   额定容量: {components['wind']['capacity']:.1f} kW")
+        response.append("⚡ 【发电功率详情】")
+        response.append("")
         
-        total_renewable = (components['solar']['current_power'] + 
-                          components['wind']['current_power'])
-        response.append(f"🌿 可再生总出力: {total_renewable:.1f} kW")
+        # 光伏详情
+        solar_ratio = solar_power / solar_capacity * 100 if solar_capacity > 0 else 0
+        response.append("☀️ 光伏发电系统:")
+        response.append(f"   当前出力: {solar_power:.1f} kW")
+        response.append(f"   额定容量: {solar_capacity:.1f} kW")
+        response.append(f"   利用率: {solar_ratio:.1f}%")
+        response.append(f"   {self._get_power_bar(solar_ratio)}")
+        response.append(f"   太阳辐照: {weather['irradiance']:.0f} W/m²")
+        response.append("")
+        
+        # 风电详情
+        wind_ratio = wind_power / wind_capacity * 100 if wind_capacity > 0 else 0
+        response.append("💨 风力发电系统:")
+        response.append(f"   当前出力: {wind_power:.1f} kW")
+        response.append(f"   额定容量: {wind_capacity:.1f} kW")
+        response.append(f"   利用率: {wind_ratio:.1f}%")
+        response.append(f"   {self._get_power_bar(wind_ratio)}")
+        response.append(f"   当前风速: {weather['wind_speed']:.1f} m/s")
+        response.append("")
+        
+        # 汇总
+        response.append("🌿 可再生能源汇总:")
+        response.append(f"   总出力: {total_renewable:.1f} kW / {total_capacity:.1f} kW")
+        response.append(f"   负荷覆盖率: {total_renewable/max(load_power, 1)*100:.1f}%")
+        
+        # 功率流向
+        power_balance = total_renewable - load_power
+        response.append("")
+        response.append("⚡ 功率流向:")
+        if power_balance > 0:
+            response.append(f"   🟢 盈余 {power_balance:.1f} kW → 可充电/售电")
+        else:
+            response.append(f"   🔴 缺口 {abs(power_balance):.1f} kW → 需放电/购电")
         
         return "\n".join(response)
+    
+    def _get_power_bar(self, percentage: float) -> str:
+        """生成功率条显示"""
+        filled = int(percentage / 10)
+        empty = 10 - filled
+        return f"   [{'█' * filled}{'░' * empty}] {percentage:.0f}%"
     
     def _handle_query_battery(self, params: Dict) -> str:
         """处理电池状态查询"""
@@ -285,26 +380,77 @@ class NLPInterface:
         
         state = self.digital_twin.get_state()
         battery = state['components']['battery']
+        price = state['price']
+        
+        soc = battery['soc']
+        capacity = battery['capacity']
+        current_energy = soc * capacity
         
         response = []
-        response.append("🔋 【储能系统状态】")
-        response.append(f"容量: {battery['capacity']:.1f} kWh")
-        response.append(f"当前SOC: {battery['soc']*100:.1f}%")
-        response.append(f"剩余电量: {battery['soc'] * battery['capacity']:.1f} kWh")
-        response.append(f"健康度: {battery['health']*100:.1f}%")
+        response.append("🔋 【储能系统详细状态】")
+        response.append("")
         
-        # SOC状态描述
-        if battery['soc'] > 0.8:
-            status = "⚡ 电量充足"
-        elif battery['soc'] > 0.5:
-            status = "✅ 电量正常"
-        elif battery['soc'] > 0.2:
-            status = "⚠️ 电量偏低"
+        # 基本信息
+        response.append("📊 电池参数:")
+        response.append(f"   总容量: {capacity:.1f} kWh")
+        response.append(f"   当前电量: {current_energy:.1f} kWh")
+        response.append(f"   SOC: {soc*100:.1f}%")
+        response.append(f"   {self._get_soc_bar(soc)}")
+        response.append("")
+        
+        # 健康状态
+        health = battery['health']
+        response.append("💚 健康状态:")
+        response.append(f"   健康度: {health*100:.1f}%")
+        response.append(f"   有效容量: {capacity * health:.1f} kWh")
+        health_status = "优秀" if health > 0.9 else ("良好" if health > 0.8 else ("一般" if health > 0.7 else "需关注"))
+        response.append(f"   状态评估: {health_status}")
+        response.append("")
+        
+        # 可用能量分析
+        usable_energy = max(0, (soc - 0.1) * capacity)  # 保留10%最低SOC
+        chargeable_energy = max(0, (0.9 - soc) * capacity)  # 最高充到90%
+        
+        response.append("⚡ 能量可用性:")
+        response.append(f"   可放电能量: {usable_energy:.1f} kWh")
+        response.append(f"   可充电空间: {chargeable_energy:.1f} kWh")
+        response.append("")
+        
+        # 运行建议
+        response.append("💡 运行建议:")
+        if soc > 0.8:
+            response.append("   ⚡ 电量充足，可考虑在高峰时段放电")
+            if price['period'] == 'peak':
+                response.append("   💰 当前为高峰电价，建议放电售电")
+        elif soc > 0.5:
+            response.append("   ✅ 电量正常，可灵活调度")
+        elif soc > 0.3:
+            response.append("   ⚠️ 电量偏低，建议在低谷时段充电")
+            if price['period'] == 'valley':
+                response.append("   💰 当前为低谷电价，建议充电")
         else:
-            status = "❌ 电量不足"
-        response.append(f"状态: {status}")
+            response.append("   🔴 电量不足，应优先充电")
+            response.append("   避免深度放电以保护电池寿命")
+        
+        # SOC状态指示
+        response.append("")
+        status_icon = self._get_soc_status_icon(soc)
+        response.append(f"📍 当前状态: {status_icon}")
         
         return "\n".join(response)
+    
+    def _get_soc_bar(self, soc: float) -> str:
+        """生成SOC条形图"""
+        filled = int(soc * 20)
+        empty = 20 - filled
+        # 使用颜色区间
+        if soc > 0.6:
+            bar_char = '🟩'
+        elif soc > 0.3:
+            bar_char = '🟨'
+        else:
+            bar_char = '🟥'
+        return f"   [{bar_char * (filled // 2)}{'⬜' * (empty // 2)}]"
     
     def _handle_query_load(self, params: Dict) -> str:
         """处理负荷查询"""
@@ -474,21 +620,76 @@ class NLPInterface:
             return "能量管理系统未初始化。"
         
         state = self.digital_twin.get_state()
-        explanation = self.agent.get_policy_explanation(state)
         
-        response = []
-        response.append("🧠 【能量管理策略分析】")
-        response.append("")
-        response.append(explanation)
-        response.append("")
-        response.append("策略制定考虑因素:")
-        response.append("  1. 当前可再生能源出力")
-        response.append("  2. 负荷需求水平")
-        response.append("  3. 电池荷电状态")
-        response.append("  4. 实时电价")
-        response.append("  5. 天气预报信息")
+        # 检查是否有详细分析方法
+        if hasattr(self.agent, 'format_strategy_display'):
+            return self.agent.format_strategy_display(state)
+        elif hasattr(self.agent, 'get_detailed_strategy_analysis'):
+            analysis = self.agent.get_detailed_strategy_analysis(state)
+            return self._format_strategy_analysis(analysis)
+        else:
+            # 回退到基础解释
+            explanation = self.agent.get_policy_explanation(state)
+            
+            response = []
+            response.append("🧠 【能量管理策略分析】")
+            response.append("")
+            response.append(explanation)
+            response.append("")
+            response.append("策略制定考虑因素:")
+            response.append("  1. 当前可再生能源出力")
+            response.append("  2. 负荷需求水平")
+            response.append("  3. 电池荷电状态")
+            response.append("  4. 实时电价")
+            response.append("  5. 天气预报信息")
+            
+            return "\n".join(response)
+    
+    def _format_strategy_analysis(self, analysis: Dict) -> str:
+        """格式化策略分析结果"""
+        lines = []
+        lines.append("=" * 50)
+        lines.append("  🧠 智能能量管理策略详细分析")
+        lines.append("=" * 50)
+        lines.append("")
         
-        return "\n".join(response)
+        # 当前状况
+        cond = analysis.get('current_conditions', {})
+        lines.append("📊 【当前系统状况】")
+        lines.append(f"   可再生发电: {cond.get('renewable_total', 0):.1f} kW")
+        lines.append(f"   负荷需求: {cond.get('load_power', 0):.1f} kW")
+        lines.append(f"   功率平衡: {cond.get('power_balance', 0):+.1f} kW")
+        lines.append(f"   电池SOC: {cond.get('battery_soc', 50):.1f}%")
+        lines.append(f"   电价: ¥{cond.get('electricity_price', 0.8):.2f}/kWh")
+        lines.append("")
+        
+        # 决策结果
+        dec = analysis.get('decision', {})
+        lines.append("🎯 【策略决策】")
+        lines.append(f"   电池操作: {dec.get('battery_action_type', '待机')}")
+        lines.append(f"   柴油发电: {'启动' if dec.get('diesel_on', False) else '关闭'}")
+        lines.append("")
+        
+        # 决策因素
+        factors = analysis.get('factors', {})
+        if factors:
+            lines.append("🔍 【关键决策因素】")
+            for name, factor in factors.items():
+                lines.append(f"   • {factor.get('description', name)}")
+        lines.append("")
+        
+        # 预期结果
+        out = analysis.get('expected_outcomes', {})
+        lines.append("📈 【预期效果】")
+        lines.append(f"   预计成本: ¥{out.get('net_cost', 0):.2f}/h")
+        lines.append(f"   电网依赖: {out.get('grid_dependency', '中')}")
+        lines.append("")
+        
+        # 置信度
+        conf = analysis.get('confidence', {})
+        lines.append(f"🎲 置信度: {conf.get('level', 50):.0f}% - {conf.get('description', '中等')}")
+        
+        return "\n".join(lines)
     
     def _handle_help(self, params: Dict) -> str:
         """处理帮助请求"""

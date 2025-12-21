@@ -367,6 +367,380 @@ class EnergyManagementAgent:
         
         return "\n".join(explanation)
     
+    def get_detailed_strategy_analysis(self, state_dict: Dict) -> Dict:
+        """
+        获取详细的策略分析
+        
+        Args:
+            state_dict: 完整的系统状态字典
+            
+        Returns:
+            详细分析结果字典
+        """
+        # 提取关键状态信息
+        components = state_dict.get('components', {})
+        weather = state_dict.get('weather', {})
+        price = state_dict.get('price', {})
+        statistics = state_dict.get('statistics', {})
+        
+        # 获取当前参数
+        solar_power = components.get('solar', {}).get('current_power', 0)
+        wind_power = components.get('wind', {}).get('current_power', 0)
+        load_power = components.get('load', {}).get('current', 0)
+        battery_soc = components.get('battery', {}).get('soc', 0.5)
+        electricity_price = price.get('buy_price', 0.8)
+        price_period = price.get('period', 'normal')
+        
+        renewable_power = solar_power + wind_power
+        power_balance = renewable_power - load_power
+        
+        # 构建观测向量进行决策
+        obs = np.zeros(self.state_dim)
+        obs[0] = 0.5  # 归一化时间
+        obs[1] = solar_power / 100 if solar_power > 0 else 0
+        obs[2] = wind_power / 50 if wind_power > 0 else 0
+        obs[3] = load_power / 150 if load_power > 0 else 0
+        obs[4] = battery_soc
+        obs[5] = electricity_price / 1.5
+        
+        # 获取决策
+        action = self.select_action(obs, training=False)
+        battery_action = action['battery_action']
+        diesel_on = action['diesel_on']
+        
+        # 计算影响因子权重
+        factors = self._analyze_decision_factors(
+            solar_power, wind_power, load_power, battery_soc, 
+            electricity_price, price_period, power_balance
+        )
+        
+        # 生成替代方案分析
+        alternatives = self._generate_alternatives(
+            battery_action, diesel_on, power_balance, battery_soc
+        )
+        
+        # 预期结果评估
+        expected_outcomes = self._estimate_outcomes(
+            battery_action, diesel_on, power_balance, 
+            electricity_price, battery_soc
+        )
+        
+        return {
+            'current_conditions': {
+                'solar_power': round(solar_power, 1),
+                'wind_power': round(wind_power, 1),
+                'renewable_total': round(renewable_power, 1),
+                'load_power': round(load_power, 1),
+                'power_balance': round(power_balance, 1),
+                'battery_soc': round(battery_soc * 100, 1),
+                'electricity_price': round(electricity_price, 2),
+                'price_period': price_period
+            },
+            'decision': {
+                'battery_action': round(battery_action, 2),
+                'battery_action_type': self._get_battery_action_type(battery_action),
+                'battery_power_percent': round(abs(battery_action) * 100, 1),
+                'diesel_on': diesel_on
+            },
+            'factors': factors,
+            'alternatives': alternatives,
+            'expected_outcomes': expected_outcomes,
+            'confidence': self._calculate_decision_confidence(factors)
+        }
+    
+    def _analyze_decision_factors(self, solar: float, wind: float, load: float,
+                                   soc: float, price: float, period: str,
+                                   balance: float) -> Dict:
+        """分析影响决策的各个因素"""
+        factors = {}
+        
+        # 功率平衡因素
+        if balance > 20:
+            factors['power_surplus'] = {
+                'weight': min(1.0, balance / 50),
+                'impact': 'positive',
+                'description': f'可再生能源过剩 {balance:.1f} kW，适合充电或售电'
+            }
+        elif balance < -20:
+            factors['power_deficit'] = {
+                'weight': min(1.0, abs(balance) / 50),
+                'impact': 'negative', 
+                'description': f'功率缺口 {abs(balance):.1f} kW，需要放电或购电'
+            }
+        else:
+            factors['power_balanced'] = {
+                'weight': 0.5,
+                'impact': 'neutral',
+                'description': '供需基本平衡'
+            }
+        
+        # 电池SOC因素
+        if soc < 0.2:
+            factors['low_soc'] = {
+                'weight': 0.9,
+                'impact': 'critical',
+                'description': f'电池电量过低 ({soc*100:.1f}%)，需要充电'
+            }
+        elif soc > 0.8:
+            factors['high_soc'] = {
+                'weight': 0.8,
+                'impact': 'limiting',
+                'description': f'电池接近满充 ({soc*100:.1f}%)，限制充电'
+            }
+        else:
+            factors['normal_soc'] = {
+                'weight': 0.3,
+                'impact': 'neutral',
+                'description': f'电池电量正常 ({soc*100:.1f}%)'
+            }
+        
+        # 电价因素
+        if period == 'valley':
+            factors['valley_price'] = {
+                'weight': 0.7,
+                'impact': 'favorable',
+                'description': f'低谷电价 (¥{price:.2f}/kWh)，适合充电'
+            }
+        elif period == 'peak':
+            factors['peak_price'] = {
+                'weight': 0.7,
+                'impact': 'expensive',
+                'description': f'高峰电价 (¥{price:.2f}/kWh)，适合放电'
+            }
+        else:
+            factors['normal_price'] = {
+                'weight': 0.4,
+                'impact': 'neutral',
+                'description': f'平段电价 (¥{price:.2f}/kWh)'
+            }
+        
+        # 可再生能源因素
+        renewable_ratio = (solar + wind) / max(load, 1)
+        if renewable_ratio > 0.8:
+            factors['high_renewable'] = {
+                'weight': 0.6,
+                'impact': 'positive',
+                'description': f'可再生能源充足 ({renewable_ratio*100:.0f}%覆盖)'
+            }
+        elif renewable_ratio < 0.3:
+            factors['low_renewable'] = {
+                'weight': 0.5,
+                'impact': 'concerning',
+                'description': f'可再生能源不足 ({renewable_ratio*100:.0f}%覆盖)'
+            }
+        
+        return factors
+    
+    def _get_battery_action_type(self, action: float) -> str:
+        """获取电池动作类型描述"""
+        if action > 0.5:
+            return '快速充电'
+        elif action > 0.2:
+            return '中速充电'
+        elif action > 0:
+            return '慢速充电'
+        elif action > -0.2:
+            return '待机/微放电'
+        elif action > -0.5:
+            return '中速放电'
+        else:
+            return '快速放电'
+    
+    def _generate_alternatives(self, current_action: float, diesel_on: bool,
+                                balance: float, soc: float) -> List[Dict]:
+        """生成替代方案分析"""
+        alternatives = []
+        
+        # 更激进的充电
+        if current_action < 0.8 and balance > 0 and soc < 0.8:
+            alternatives.append({
+                'action': '增加充电功率',
+                'pros': ['更好地利用过剩可再生能源', '储备更多能量'],
+                'cons': ['电池磨损加速', '可能导致过充'],
+                'recommendation': 'moderate'
+            })
+        
+        # 更激进的放电
+        if current_action > -0.8 and balance < 0 and soc > 0.3:
+            alternatives.append({
+                'action': '增加放电功率',
+                'pros': ['减少购电成本', '提高自给率'],
+                'cons': ['电池电量下降快', '可能影响后续供电'],
+                'recommendation': 'moderate'
+            })
+        
+        # 启动柴油机
+        if not diesel_on and balance < -30 and soc < 0.3:
+            alternatives.append({
+                'action': '启动柴油发电机',
+                'pros': ['保证供电可靠性', '缓解功率缺口'],
+                'cons': ['增加碳排放', '运行成本高'],
+                'recommendation': 'emergency_only'
+            })
+        
+        # 维持现状
+        alternatives.append({
+            'action': '维持当前策略',
+            'pros': ['稳定运行', '风险可控'],
+            'cons': ['可能非最优'],
+            'recommendation': 'default'
+        })
+        
+        return alternatives
+    
+    def _estimate_outcomes(self, battery_action: float, diesel_on: bool,
+                           balance: float, price: float, soc: float) -> Dict:
+        """估计预期结果"""
+        # 估计每小时成本
+        if balance > 0:
+            # 有盈余,可能售电
+            export_power = min(balance, 50)  # 假设最大售电50kW
+            hourly_revenue = export_power * price * 0.7
+            hourly_cost = 0
+        else:
+            # 有缺口,需要购电或放电
+            deficit = abs(balance)
+            battery_contribution = min(deficit, abs(battery_action) * 50) if battery_action < 0 else 0
+            grid_import = deficit - battery_contribution
+            hourly_cost = grid_import * price
+            hourly_revenue = 0
+        
+        # 估计SOC变化
+        if battery_action > 0:
+            soc_change = battery_action * 0.25  # 假设满功率充电每小时25%
+        else:
+            soc_change = battery_action * 0.25
+        
+        new_soc = max(0.1, min(0.9, soc + soc_change))
+        
+        return {
+            'estimated_hourly_cost': round(hourly_cost, 2),
+            'estimated_hourly_revenue': round(hourly_revenue, 2),
+            'net_cost': round(hourly_cost - hourly_revenue, 2),
+            'soc_after_1h': round(new_soc * 100, 1),
+            'grid_dependency': '低' if abs(balance) < 20 else ('中' if abs(balance) < 50 else '高'),
+            'renewable_utilization': '高' if balance >= 0 else '中等'
+        }
+    
+    def _calculate_decision_confidence(self, factors: Dict) -> Dict:
+        """计算决策置信度"""
+        total_weight = sum(f['weight'] for f in factors.values())
+        positive_weight = sum(f['weight'] for f in factors.values() 
+                             if f['impact'] in ['positive', 'favorable'])
+        negative_weight = sum(f['weight'] for f in factors.values() 
+                             if f['impact'] in ['negative', 'critical', 'expensive'])
+        
+        # 基于因素一致性计算置信度
+        if total_weight > 0:
+            consistency = 1 - abs(positive_weight - negative_weight) / total_weight
+            base_confidence = 0.5 + 0.3 * (1 - consistency)
+        else:
+            base_confidence = 0.5
+        
+        # 考虑探索率
+        exploration_factor = 1 - self.epsilon
+        final_confidence = base_confidence * exploration_factor
+        
+        return {
+            'level': round(final_confidence * 100, 1),
+            'description': self._get_confidence_description(final_confidence),
+            'exploration_mode': self.epsilon > 0.1
+        }
+    
+    def _get_confidence_description(self, confidence: float) -> str:
+        """获取置信度描述"""
+        if confidence > 0.8:
+            return '高置信度 - 决策因素明确一致'
+        elif confidence > 0.6:
+            return '中等置信度 - 存在一定权衡'
+        elif confidence > 0.4:
+            return '较低置信度 - 多因素相互制约'
+        else:
+            return '低置信度 - 处于探索学习阶段'
+    
+    def format_strategy_display(self, state_dict: Dict) -> str:
+        """
+        格式化策略显示（用于界面展示）
+        
+        Args:
+            state_dict: 完整的系统状态字典
+            
+        Returns:
+            格式化的策略分析文本
+        """
+        analysis = self.get_detailed_strategy_analysis(state_dict)
+        
+        lines = []
+        lines.append("=" * 55)
+        lines.append("        🧠 智能能量管理策略详细分析")
+        lines.append("=" * 55)
+        lines.append("")
+        
+        # 当前状况
+        cond = analysis['current_conditions']
+        lines.append("📊 【当前系统状况】")
+        lines.append(f"   ☀️ 光伏发电: {cond['solar_power']:.1f} kW")
+        lines.append(f"   💨 风力发电: {cond['wind_power']:.1f} kW")
+        lines.append(f"   🌿 可再生总计: {cond['renewable_total']:.1f} kW")
+        lines.append(f"   📈 负荷需求: {cond['load_power']:.1f} kW")
+        lines.append(f"   ⚖️ 功率平衡: {cond['power_balance']:+.1f} kW")
+        lines.append(f"   🔋 电池SOC: {cond['battery_soc']:.1f}%")
+        lines.append(f"   💰 当前电价: ¥{cond['electricity_price']:.2f}/kWh ({cond['price_period']})")
+        lines.append("")
+        
+        # 决策结果
+        dec = analysis['decision']
+        lines.append("🎯 【策略决策】")
+        lines.append(f"   电池操作: {dec['battery_action_type']}")
+        lines.append(f"   控制功率: {dec['battery_power_percent']:.0f}% 额定功率")
+        lines.append(f"   柴油发电: {'启动' if dec['diesel_on'] else '关闭'}")
+        lines.append("")
+        
+        # 决策因素
+        lines.append("🔍 【决策因素分析】")
+        for name, factor in analysis['factors'].items():
+            impact_icon = {
+                'positive': '✅', 'favorable': '✅',
+                'negative': '⚠️', 'critical': '🔴', 'expensive': '💸',
+                'neutral': '➖', 'limiting': '⛔', 'concerning': '⚡'
+            }.get(factor['impact'], '•')
+            lines.append(f"   {impact_icon} {factor['description']}")
+            lines.append(f"      权重: {'█' * int(factor['weight'] * 10)}{'░' * (10 - int(factor['weight'] * 10))} ({factor['weight']:.1f})")
+        lines.append("")
+        
+        # 预期结果
+        out = analysis['expected_outcomes']
+        lines.append("📈 【预期效果（1小时）】")
+        lines.append(f"   预计成本: ¥{out['net_cost']:.2f}")
+        lines.append(f"   电池SOC: → {out['soc_after_1h']:.1f}%")
+        lines.append(f"   电网依赖: {out['grid_dependency']}")
+        lines.append(f"   清洁能源利用: {out['renewable_utilization']}")
+        lines.append("")
+        
+        # 置信度
+        conf = analysis['confidence']
+        lines.append("🎲 【决策置信度】")
+        conf_bar = '█' * int(conf['level'] / 10) + '░' * (10 - int(conf['level'] / 10))
+        lines.append(f"   置信度: {conf_bar} {conf['level']:.0f}%")
+        lines.append(f"   {conf['description']}")
+        if conf['exploration_mode']:
+            lines.append(f"   ⚡ 当前处于探索学习模式")
+        lines.append("")
+        
+        # 替代方案
+        lines.append("💡 【替代方案参考】")
+        for alt in analysis['alternatives'][:3]:
+            rec_icon = {'moderate': '🔸', 'emergency_only': '🔺', 'default': '🔹'}.get(
+                alt['recommendation'], '•')
+            lines.append(f"   {rec_icon} {alt['action']}")
+            lines.append(f"      优点: {', '.join(alt['pros'][:2])}")
+            lines.append(f"      缺点: {', '.join(alt['cons'][:2])}")
+        
+        lines.append("")
+        lines.append("=" * 55)
+        
+        return "\n".join(lines)
+    
     def save(self, path: str):
         """保存模型"""
         data = {
