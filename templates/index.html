@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微网数字孪生系统 - 3D可视化</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Simple OrbitControls implementation if CDN fails
+        if (typeof THREE.OrbitControls === 'undefined') {
+            THREE.OrbitControls = function(camera, domElement) {
+                this.object = camera;
+                this.domElement = domElement;
+                this.enableDamping = true;
+                this.dampingFactor = 0.05;
+                this.minDistance = 10;
+                this.maxDistance = 100;
+                
+                let isMouseDown = false;
+                let lastMouseX = 0;
+                let lastMouseY = 0;
+                let spherical = new THREE.Spherical();
+                spherical.setFromVector3(camera.position);
+                
+                const onMouseDown = (e) => {
+                    isMouseDown = true;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                };
+                
+                const onMouseUp = () => { isMouseDown = false; };
+                
+                const onMouseMove = (e) => {
+                    if (!isMouseDown) return;
+                    const deltaX = e.clientX - lastMouseX;
+                    const deltaY = e.clientY - lastMouseY;
+                    spherical.theta -= deltaX * 0.01;
+                    spherical.phi += deltaY * 0.01;
+                    spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+                    camera.position.setFromSpherical(spherical);
+                    camera.lookAt(0, 0, 0);
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                };
+                
+                const onWheel = (e) => {
+                    spherical.radius += e.deltaY * 0.01;
+                    spherical.radius = Math.max(this.minDistance, Math.min(this.maxDistance, spherical.radius));
+                    camera.position.setFromSpherical(spherical);
+                    camera.lookAt(0, 0, 0);
+                };
+                
+                domElement.addEventListener('mousedown', onMouseDown);
+                domElement.addEventListener('mouseup', onMouseUp);
+                domElement.addEventListener('mousemove', onMouseMove);
+                domElement.addEventListener('wheel', onWheel);
+                
+                this.update = function() {
+                    if (this.enableDamping) {
+                        spherical.radius *= (1 - this.dampingFactor);
+                        camera.position.setFromSpherical(spherical);
+                    }
+                };
+            };
+        }
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            min-width: 300px;
+            max-height: 90vh;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+        
+        #control-panel h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 24px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .stat-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .stat-label {
+            font-weight: bold;
+            color: #555;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            color: #333;
+            margin-top: 5px;
+        }
+        
+        .stat-value.positive {
+            color: #4caf50;
+        }
+        
+        .stat-value.negative {
+            color: #f44336;
+        }
+        
+        #nlp-panel {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #eee;
+        }
+        
+        #nlp-input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        #nlp-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        #nlp-response {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 8px;
+            min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            background: #667eea;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button.stop {
+            background: #f44336;
+        }
+        
+        button.stop:hover {
+            background: #d32f2f;
+        }
+        
+        #info-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            max-width: 300px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container"></div>
+        
+        <div id="control-panel">
+            <h2>系统控制面板</h2>
+            
+            <div class="stat-item">
+                <div class="stat-label">电池SOC</div>
+                <div class="stat-value" id="battery-soc">--</div>
+            </div>
+            
+            <div class="stat-item">
+                <div class="stat-label">光伏发电 (kW)</div>
+                <div class="stat-value positive" id="pv-power">--</div>
+            </div>
+            
+            <div class="stat-item">
+                <div class="stat-label">风电发电 (kW)</div>
+                <div class="stat-value positive" id="wind-power">--</div>
+            </div>
+            
+            <div class="stat-item">
+                <div class="stat-label">负荷需求 (kW)</div>
+                <div class="stat-value" id="load">--</div>
+            </div>
+            
+            <div class="stat-item">
+                <div class="stat-label">电价 ($/kWh)</div>
+                <div class="stat-value" id="price">--</div>
+            </div>
+            
+            <div class="stat-item">
+                <div class="stat-label">累计成本 ($)</div>
+                <div class="stat-value" id="total-cost">--</div>
+            </div>
+            
+            <div class="button-group">
+                <button id="start-btn">开始</button>
+                <button id="stop-btn" class="stop">停止</button>
+                <button id="reset-btn">重置</button>
+            </div>
+            
+            <div id="nlp-panel">
+                <h3 style="margin-bottom: 10px; font-size: 18px;">自然语言查询</h3>
+                <input type="text" id="nlp-input" placeholder="输入查询，例如：系统状态如何？">
+                <div id="nlp-response">等待查询...</div>
+            </div>
+        </div>
+        
+        <div id="info-panel">
+            <div><strong>微网数字孪生系统</strong></div>
+            <div style="margin-top: 5px;">3D实时可视化</div>
+            <div id="fps" style="margin-top: 5px;">FPS: --</div>
+        </div>
+    </div>
+    
+    <script src="/static/js/visualization.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
