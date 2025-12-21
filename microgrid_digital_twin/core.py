@@ -324,6 +324,8 @@ class MicrogridDigitalTwin:
         # 时间
         self.current_time = datetime.now()
         self.time_step = timedelta(minutes=1)
+        self.simulation_duration = timedelta(days=30)  # 模拟30天
+        self.start_time = self.current_time
         
         # 历史数据
         self.history = {
@@ -514,7 +516,17 @@ class MicrogridDigitalTwin:
         self.total_renewable_energy = 0.0
         self.total_energy_consumed = 0.0
         self.current_time = datetime.now()
+        self.start_time = self.current_time
         self.history = {key: [] for key in self.history}
+    
+    def get_elapsed_days(self) -> float:
+        """获取已运行天数"""
+        elapsed = self.current_time - self.start_time
+        return elapsed.total_seconds() / (24 * 3600)
+    
+    def is_simulation_complete(self) -> bool:
+        """检查是否完成30天模拟"""
+        return (self.current_time - self.start_time) >= self.simulation_duration
         
     def get_observation(self) -> np.ndarray:
         """获取强化学习观测向量"""

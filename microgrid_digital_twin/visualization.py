@@ -14,7 +14,8 @@ import base64
 
 
 def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
-                                    width: int = 1200, height: int = 800) -> str:
+                                    width: int = 1200, height: int = 800,
+                                    strategy_data: Dict = None) -> str:
     """
     生成完整的3D可视化HTML
     
@@ -23,6 +24,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         history: 历史数据
         width: 画布宽度
         height: 画布高度
+        strategy_data: 策略对比数据
         
     Returns:
         完整的HTML代码
@@ -31,6 +33,25 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
     # 准备数据
     state_json = json.dumps(state or {})
     history_json = json.dumps(history or {})
+    strategy_json = json.dumps(strategy_data or {
+        'mode': '混合模式',
+        'rl_confidence': 0.5,
+        'epsilon': 0.3,
+        'training_steps': 0,
+        'buffer_size': 0,
+        'recent_performance': 0,
+        'rl_cost': 0,
+        'rule_cost': 0,
+        'rl_renewable': 0,
+        'rule_renewable': 0,
+        'comparison_history': {
+            'days': [],
+            'rl_costs': [],
+            'rule_costs': [],
+            'rl_renewable': [],
+            'rule_renewable': []
+        }
+    })
     
     html_template = f'''
 <!DOCTYPE html>
@@ -1490,16 +1511,52 @@ class Visualization3D:
         self.digital_twin = digital_twin
         self.html_content = None
         
-    def generate(self) -> str:
+    def generate(self, strategy_data: Dict = None) -> str:
         """生成3D可视化HTML"""
-        state = None
-        history = None
+        import os
         
-        if self.digital_twin:
-            state = self.digital_twin.get_state()
-            history = self.digital_twin.history
+        # 尝试读取更新后的HTML模板文件
+        template_path = '/workspace/microgrid_3d_visualization.html'
         
-        self.html_content = generate_3d_visualization_html(state, history)
+        if os.path.exists(template_path):
+            # 使用更新后的HTML文件
+            with open(template_path, 'r', encoding='utf-8') as f:
+                self.html_content = f.read()
+            
+            # 如果有数字孪生系统，更新数据
+            if self.digital_twin:
+                state = self.digital_twin.get_state()
+                history = self.digital_twin.history
+                
+                # 替换初始数据
+                state_json = json.dumps(state)
+                history_json = json.dumps(history)
+                
+                # 替换系统状态数据
+                import re
+                self.html_content = re.sub(
+                    r'let systemState = \{[^;]+\};',
+                    f'let systemState = {state_json};',
+                    self.html_content,
+                    count=1
+                )
+                self.html_content = re.sub(
+                    r'let historyData = \{[^;]+\};',
+                    f'let historyData = {history_json};',
+                    self.html_content,
+                    count=1
+                )
+        else:
+            # 如果找不到模板文件，使用函数生成
+            state = None
+            history = None
+            
+            if self.digital_twin:
+                state = self.digital_twin.get_state()
+                history = self.digital_twin.history
+            
+            self.html_content = generate_3d_visualization_html(state, history, strategy_data=strategy_data)
+        
         return self.html_content
     
     def display_in_notebook(self):
