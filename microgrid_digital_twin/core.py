@@ -455,6 +455,29 @@ class MicrogridDigitalTwin:
         self.current_time += self.time_step
         
         return state
+
+    def run_simulation(self, duration: timedelta) -> Dict:
+        """
+        运行指定时长的模拟
+        
+        Args:
+            duration: 模拟时长
+            
+        Returns:
+            历史数据字典
+        """
+        end_time = self.current_time + duration
+        while self.current_time < end_time:
+            # 简单策略：SOC < 0.2 时充电，SOC > 0.8 时放电
+            action = {'battery_action': 0, 'diesel_on': False}
+            if self.battery.soc < 0.2:
+                action['battery_action'] = 0.5
+            elif self.battery.soc > 0.8:
+                action['battery_action'] = -0.5
+                
+            self.step(action)
+            
+        return self.history
     
     def get_state(self) -> Dict:
         """获取当前系统状态"""

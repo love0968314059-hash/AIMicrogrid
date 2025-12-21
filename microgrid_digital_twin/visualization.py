@@ -30,6 +30,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
     
     # 准备数据
     state_json = json.dumps(state or {})
+    # 为了避免数据量过大导致页面崩溃，如果历史数据过大，进行降采样
+    if history:
+        # 简单降采样策略：如果超过2000个点，保持首尾，中间每隔N个取一个
+        max_points = 2000
+        for key, value in history.items():
+            if isinstance(value, list) and len(value) > max_points:
+                step = len(value) // max_points
+                history[key] = value[::step]
+                
     history_json = json.dumps(history or {})
     
     html_template = f'''
@@ -110,11 +119,23 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         }}
         
+        #strategy-panel {{
+            top: 80px;
+            right: 320px; 
+            width: 300px;
+            background: rgba(15, 52, 96, 0.85);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(100, 200, 255, 0.2);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }}
+
         #chart-panel {{
             bottom: 20px;
             left: 20px;
             right: 320px;
-            height: 200px;
+            height: 240px;
             background: rgba(15, 52, 96, 0.85);
             border-radius: 15px;
             padding: 15px;
@@ -340,7 +361,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         
         #legend {{
             position: absolute;
-            bottom: 240px;
+            bottom: 280px;
             left: 20px;
             background: rgba(15, 52, 96, 0.85);
             padding: 15px;
@@ -368,7 +389,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             gap: 15px;
             padding: 10px 20px;
             position: absolute;
-            bottom: 240px;
+            bottom: 280px;
             left: 320px;
             right: 320px;
         }}
@@ -395,6 +416,99 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         
         canvas {{
             display: block;
+        }}
+
+        /* 模态框样式 */
+        .modal {{
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.6);
+            backdrop-filter: blur(5px);
+            align-items: center;
+            justify-content: center;
+        }}
+
+        .modal-content {{
+            background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+            border: 1px solid #00d4ff;
+            border-radius: 15px;
+            padding: 25px;
+            width: 50%;
+            max-width: 600px;
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.3);
+            position: relative;
+            animation: modalFadeIn 0.3s ease;
+        }}
+
+        @keyframes modalFadeIn {{
+            from {{ opacity: 0; transform: translateY(-20px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        .close-btn {{
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 24px;
+            color: #aaa;
+            cursor: pointer;
+            transition: color 0.3s;
+        }}
+
+        .close-btn:hover {{
+            color: #fff;
+        }}
+
+        .modal-header {{
+            font-size: 1.4em;
+            color: #00d4ff;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(100, 200, 255, 0.3);
+        }}
+
+        .modal-body {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }}
+        
+        .modal-stat-item {{
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 8px;
+        }}
+
+        .modal-stat-label {{
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }}
+
+        .modal-stat-value {{
+            color: #fff;
+            font-size: 1.2em;
+            font-weight: bold;
+        }}
+
+        /* 下拉菜单样式 */
+        select {{
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #00d4ff;
+            color: white;
+            border-radius: 5px;
+        }}
+        
+        option {{
+            background: #16213e;
         }}
         
         @keyframes pulse {{
@@ -473,6 +587,30 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             </div>
         </div>
         
+        <!-- Strategy Panel (New) -->
+        <div id="strategy-panel" class="overlay">
+            <div class="panel-title">🧠 策略管理与对比</div>
+            <div style="font-size: 0.9em; color: #aaa; margin-bottom: 5px;">选择执行策略:</div>
+            <select id="strategy-select">
+                <option value="rule">基于规则 (Rule-Based)</option>
+                <option value="ppo">强化学习 (PPO Agent)</option>
+                <option value="dqn">深度Q网络 (DQN Agent)</option>
+                <option value="hybrid">混合自适应 (Adaptive)</option>
+            </select>
+            
+            <div class="status-item">
+                <span class="status-label">当前策略置信度</span>
+                <span class="status-value" id="strategy-confidence">N/A</span>
+            </div>
+            
+            <button class="control-btn btn-primary" id="btn-compare-strategy">
+                📊 显示策略对比分析
+            </button>
+            <div style="margin-top: 10px; font-size: 0.8em; color: #888;">
+                * 点击场景中的组件可查看详细信息
+            </div>
+        </div>
+
         <!-- Control Panel -->
         <div id="control-panel" class="overlay">
             <div class="panel-title">🎮 能量管理控制</div>
@@ -513,7 +651,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                         <span>模拟速度</span>
                         <span id="speed-value">1x</span>
                     </div>
-                    <input type="range" id="speed-slider" min="1" max="10" value="1">
+                    <input type="range" id="speed-slider" min="1" max="20" value="1">
                 </div>
                 
                 <button class="control-btn btn-primary" id="btn-play">
@@ -530,7 +668,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         <div id="metrics-grid" class="overlay">
             <div class="metric-card">
                 <div class="metric-value" id="total-cost">¥0.00</div>
-                <div class="metric-label">累计成本</div>
+                <div class="metric-label">本月累计成本</div>
             </div>
             <div class="metric-card">
                 <div class="metric-value" id="total-energy">0 kWh</div>
@@ -548,6 +686,13 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         
         <!-- Chart Panel -->
         <div id="chart-panel" class="overlay">
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span id="chart-title" style="color:#00d4ff; font-weight:bold;">功率趋势图 (30天周期)</span>
+                <select id="chart-mode" style="width: 100px; padding: 2px; margin: 0; font-size: 0.8em;">
+                    <option value="power">功率监控</option>
+                    <option value="strategy">策略对比</option>
+                </select>
+            </div>
             <canvas id="power-chart"></canvas>
         </div>
         
@@ -589,6 +734,17 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             </div>
         </div>
     </div>
+
+    <!-- Detail Modal -->
+    <div id="component-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <div class="modal-header" id="modal-title">组件详情</div>
+            <div class="modal-body" id="modal-body">
+                <!-- Content injected by JS -->
+            </div>
+        </div>
+    </div>
     
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -607,6 +763,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         let simulationSpeed = 1;
         let dieselOn = false;
         let autoMode = true;
+        let raycaster, mouse;
         
         // 初始化Three.js场景
         function initScene() {{
@@ -636,6 +793,14 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             controls.maxDistance = 200;
             controls.maxPolarAngle = Math.PI / 2.1;
             
+            // 交互射线
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            // 事件监听
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', onMouseClick);
+            
             // 光照
             setupLighting();
             
@@ -647,9 +812,6 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             
             // 创建电力流动粒子
             createPowerFlowSystem();
-            
-            // 窗口大小调整
-            window.addEventListener('resize', onWindowResize);
         }}
         
         function setupLighting() {{
@@ -739,6 +901,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         
         function createSolarPanels() {{
             const panelGroup = new THREE.Group();
+            panelGroup.name = 'SolarGroup';
             
             for (let i = 0; i < 4; i++) {{
                 for (let j = 0; j < 3; j++) {{
@@ -771,12 +934,22 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             labelSprite.position.set(-25, 15, -22);
             panelGroup.add(labelSprite);
             
+            // 碰撞箱，用于点击
+            const hitBox = new THREE.Mesh(
+                new THREE.BoxGeometry(40, 10, 30),
+                new THREE.MeshBasicMaterial({{ visible: false }})
+            );
+            hitBox.position.set(-25, 4, -22);
+            hitBox.userData = {{ type: 'solar', name: '光伏发电系统' }};
+            panelGroup.add(hitBox);
+
             scene.add(panelGroup);
         }}
         
         function createWindTurbines() {{
             for (let i = 0; i < 2; i++) {{
                 const turbineGroup = new THREE.Group();
+                turbineGroup.name = 'WindTurbine' + i;
                 
                 // 塔筒
                 const towerGeometry = new THREE.CylinderGeometry(1, 2, 30, 8);
@@ -810,6 +983,16 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                 turbineGroup.bladesGroup = bladesGroup;
                 
                 turbineGroup.position.set(40 + i * 25, 0, -30);
+                
+                // 碰撞箱
+                const hitBox = new THREE.Mesh(
+                    new THREE.BoxGeometry(20, 40, 20),
+                    new THREE.MeshBasicMaterial({{ visible: false }})
+                );
+                hitBox.position.set(0, 15, 0);
+                hitBox.userData = {{ type: 'wind', name: '风力发电机 #' + (i+1) }};
+                turbineGroup.add(hitBox);
+                
                 scene.add(turbineGroup);
                 windTurbines.push(turbineGroup);
             }}
@@ -855,6 +1038,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             const labelSprite = createLabel('🔋 储能系统\\n200 kWh', 0x2ecc71);
             labelSprite.position.set(3, 18, 35);
             batterySystem.add(labelSprite);
+            
+            // 碰撞箱
+            const hitBox = new THREE.Mesh(
+                new THREE.BoxGeometry(30, 15, 10),
+                new THREE.MeshBasicMaterial({{ visible: false }})
+            );
+            hitBox.position.set(3, 7, 35);
+            hitBox.userData = {{ type: 'battery', name: '锂离子电池储能系统' }};
+            batterySystem.add(hitBox);
             
             scene.add(batterySystem);
         }}
@@ -904,6 +1096,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             labelSprite.position.set(0, 25, 0);
             loadCenter.add(labelSprite);
             
+            // 碰撞箱
+            const hitBox = new THREE.Mesh(
+                new THREE.BoxGeometry(25, 20, 20),
+                new THREE.MeshBasicMaterial({{ visible: false }})
+            );
+            hitBox.position.set(0, 10, 0);
+            hitBox.userData = {{ type: 'load', name: '综合负荷中心' }};
+            loadCenter.add(hitBox);
+            
             scene.add(loadCenter);
         }}
         
@@ -941,6 +1142,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             const labelSprite = createLabel('⚡ 电网连接\\n100kW进/50kW出', 0x9b59b6);
             labelSprite.position.set(0, 30, -5);
             gridConnection.add(labelSprite);
+            
+            // 碰撞箱
+            const hitBox = new THREE.Mesh(
+                new THREE.BoxGeometry(20, 30, 20),
+                new THREE.MeshBasicMaterial({{ visible: false }})
+            );
+            hitBox.position.set(0, 15, -5);
+            hitBox.userData = {{ type: 'grid', name: '大电网连接点' }};
+            gridConnection.add(hitBox);
             
             scene.add(gridConnection);
         }}
@@ -1083,6 +1293,167 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         }}
+
+        // 点击事件处理
+        function onMouseClick(event) {{
+            // 计算鼠标位置
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 检测相交
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            
+            for (let i = 0; i < intersects.length; i++) {{
+                // 查找带有userData的组件
+                let object = intersects[i].object;
+                while (object.parent && object.parent !== scene) {{
+                    if (object.userData && object.userData.type) break;
+                    object = object.parent;
+                }}
+                
+                if (object.userData && object.userData.type) {{
+                    showComponentDetail(object.userData);
+                    break;
+                }}
+            }}
+        }}
+
+        // 显示组件详情
+        function showComponentDetail(data) {{
+            const modal = document.getElementById('component-modal');
+            const title = document.getElementById('modal-title');
+            const body = document.getElementById('modal-body');
+            
+            title.textContent = data.name + ' - 详细运行状态';
+            
+            let content = '';
+            
+            if (data.type === 'solar') {{
+                content = `
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">当前输出功率</div>
+                        <div class="modal-stat-value">${{document.getElementById('solar-power').textContent}}</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">日照强度</div>
+                        <div class="modal-stat-value">856 W/m²</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">组件温度</div>
+                        <div class="modal-stat-value">42.5 °C</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">今日发电量</div>
+                        <div class="modal-stat-value">345.2 kWh</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">阵列效率</div>
+                        <div class="modal-stat-value">19.8%</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">运行状态</div>
+                        <div class="modal-stat-value good">MPPT跟踪中</div>
+                    </div>
+                `;
+            }} else if (data.type === 'wind') {{
+                content = `
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">当前输出功率</div>
+                        <div class="modal-stat-value">${{document.getElementById('wind-power').textContent}}</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">风速</div>
+                        <div class="modal-stat-value">8.5 m/s</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">转子转速</div>
+                        <div class="modal-stat-value">18.5 RPM</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">桨距角</div>
+                        <div class="modal-stat-value">2.1°</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">偏航角</div>
+                        <div class="modal-stat-value">215° SW</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">运行状态</div>
+                        <div class="modal-stat-value good">并网运行</div>
+                    </div>
+                `;
+            }} else if (data.type === 'battery') {{
+                content = `
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">SOC (荷电状态)</div>
+                        <div class="modal-stat-value">${{document.getElementById('battery-soc').textContent}}</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">SOH (健康度)</div>
+                        <div class="modal-stat-value">98.5%</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">充放电功率</div>
+                        <div class="modal-stat-value">+15.2 kW</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">电池组电压</div>
+                        <div class="modal-stat-value">720 V</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">电池温度</div>
+                        <div class="modal-stat-value">28.5 °C</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">循环次数</div>
+                        <div class="modal-stat-value">428</div>
+                    </div>
+                `;
+            }} else if (data.type === 'load') {{
+                content = `
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">实时负荷</div>
+                        <div class="modal-stat-value">${{document.getElementById('load-power').textContent}}</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">日峰值负荷</div>
+                        <div class="modal-stat-value">142.5 kW</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">重要负荷占比</div>
+                        <div class="modal-stat-value">35%</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">功率因数</div>
+                        <div class="modal-stat-value">0.95</div>
+                    </div>
+                `;
+            }} else if (data.type === 'grid') {{
+                content = `
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">电网状态</div>
+                        <div class="modal-stat-value good">连接正常</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">当前电价</div>
+                        <div class="modal-stat-value">${{document.getElementById('price').textContent}}</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">电网频率</div>
+                        <div class="modal-stat-value">50.02 Hz</div>
+                    </div>
+                    <div class="modal-stat-item">
+                        <div class="modal-stat-label">交互功率</div>
+                        <div class="modal-stat-value">-25.4 kW (售电)</div>
+                    </div>
+                `;
+            }}
+            
+            body.innerHTML = content;
+            modal.style.display = 'flex';
+        }}
         
         // 动画循环
         function animate() {{
@@ -1185,12 +1556,12 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         }}
         
         // 简单图表绘制
-        function drawChart(history) {{
+        function drawChart(history, mode='power') {{
             const canvas = document.getElementById('power-chart');
             const ctx = canvas.getContext('2d');
             
             canvas.width = canvas.parentElement.clientWidth - 30;
-            canvas.height = canvas.parentElement.clientHeight - 30;
+            canvas.height = canvas.parentElement.clientHeight - 40;
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
@@ -1203,31 +1574,52 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             ctx.lineTo(canvas.width - 10, canvas.height - 20);
             ctx.stroke();
             
-            // 绘制标题
-            ctx.fillStyle = '#00d4ff';
-            ctx.font = '14px Arial';
-            ctx.fillText('功率趋势图 (kW)', 50, 20);
-            
-            if (!history || !history.solar_power || history.solar_power.length === 0) {{
+            if (!history) {{
                 ctx.fillStyle = '#888';
                 ctx.fillText('暂无数据', canvas.width / 2 - 30, canvas.height / 2);
                 return;
             }}
             
-            const dataLength = Math.min(60, history.solar_power.length);
-            const startIdx = Math.max(0, history.solar_power.length - dataLength);
-            
             const chartWidth = canvas.width - 60;
             const chartHeight = canvas.height - 40;
             
-            // 数据系列
-            const series = [
-                {{ data: history.solar_power, color: '#f1c40f', name: '光伏' }},
-                {{ data: history.wind_power, color: '#3498db', name: '风电' }},
-                {{ data: history.load_power, color: '#e74c3c', name: '负荷' }}
-            ];
-            
-            // 找最大值
+            if (mode === 'power') {{
+                // 功率模式
+                if (!history.solar_power || history.solar_power.length === 0) return;
+                
+                const dataLength = history.solar_power.length;
+                // 显示最近30天 (假设每小时一个点，720个点) 或所有点
+                const startIdx = Math.max(0, dataLength - 720); 
+                
+                const series = [
+                    {{ data: history.solar_power, color: '#f1c40f', name: '光伏' }},
+                    {{ data: history.wind_power, color: '#3498db', name: '风电' }},
+                    {{ data: history.load_power, color: '#e74c3c', name: '负荷' }}
+                ];
+                
+                drawSeries(ctx, series, startIdx, dataLength, chartWidth, chartHeight, canvas.height);
+                
+            }} else {{
+                // 策略对比模式 (Mock data for visualization)
+                ctx.fillStyle = '#00d4ff';
+                ctx.fillText('策略累积成本对比', 50, 20);
+                
+                // 模拟数据生成
+                const points = 100;
+                const ruleCost = Array(points).fill(0).map((_, i) => i * 1.2 + Math.random() * 5);
+                const rlCost = Array(points).fill(0).map((_, i) => i * 0.9 + Math.random() * 3);
+                
+                const series = [
+                    {{ data: ruleCost, color: '#e74c3c', name: '规则基准' }},
+                    {{ data: rlCost, color: '#2ecc71', name: 'RL代理' }}
+                ];
+                
+                drawSeries(ctx, series, 0, points, chartWidth, chartHeight, canvas.height);
+            }}
+        }}
+
+        function drawSeries(ctx, series, startIdx, dataLength, chartWidth, chartHeight, canvasHeight) {{
+             // 找最大值
             let maxVal = 0;
             series.forEach(s => {{
                 if (s.data) {{
@@ -1235,9 +1627,8 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                     maxVal = Math.max(maxVal, ...sliced);
                 }}
             }});
-            maxVal = Math.max(maxVal, 100) * 1.1;
-            
-            // 绘制数据线
+            maxVal = Math.max(maxVal, 10) * 1.1;
+
             series.forEach(s => {{
                 if (!s.data || s.data.length === 0) return;
                 
@@ -1246,9 +1637,11 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                 ctx.beginPath();
                 
                 const sliced = s.data.slice(startIdx);
+                const len = sliced.length;
+                
                 sliced.forEach((val, i) => {{
-                    const x = 40 + (i / (dataLength - 1)) * chartWidth;
-                    const y = (canvas.height - 20) - (val / maxVal) * chartHeight;
+                    const x = 40 + (i / (len - 1)) * chartWidth;
+                    const y = (canvasHeight - 20) - (val / maxVal) * chartHeight;
                     
                     if (i === 0) {{
                         ctx.moveTo(x, y);
@@ -1261,7 +1654,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             }});
             
             // 绘制图例
-            let legendX = canvas.width - 150;
+            let legendX = chartWidth + 40 - 120;
             series.forEach((s, i) => {{
                 ctx.fillStyle = s.color;
                 ctx.fillRect(legendX, 10 + i * 18, 12, 12);
@@ -1301,9 +1694,9 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             }} else if (message.includes('电池') || message.includes('battery')) {{
                 return '储能系统状态良好。当前SOC: 55%，剩余容量约110kWh，健康度98%。建议在低电价时段充电。';
             }} else if (message.includes('成本') || message.includes('cost')) {{
-                return '今日累计电费约¥45.60，比昨日节省12%。主要节省来自光伏发电高峰期的自发自用。';
-            }} else if (message.includes('预测') || message.includes('forecast')) {{
-                return '未来1小时预测: 光伏将保持在50-70kW，风电15-30kW，负荷预计上升至100kW。建议维持当前储能策略。';
+                return '本月累计电费约¥4560.00，比上月节省12%。主要节省来自光伏发电高峰期的自发自用。';
+            }} else if (message.includes('策略') || message.includes('strategy')) {{
+                return '当前运行策略：混合自适应模式。RL智能体置信度为0.85，系统正在优先优化用电成本。';
             }} else if (message.includes('帮助') || message.includes('help')) {{
                 return '您可以询问: 系统状态、电池情况、今日成本、未来预测、策略建议等。也可以使用控制面板直接操作设备。';
             }} else {{
@@ -1385,6 +1778,36 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                     this.value = '';
                 }}
             }});
+
+            // 模态框关闭
+            document.querySelector('.close-btn').addEventListener('click', function() {{
+                document.getElementById('component-modal').style.display = 'none';
+            }});
+            
+            window.onclick = function(event) {{
+                const modal = document.getElementById('component-modal');
+                if (event.target == modal) {{
+                    modal.style.display = "none";
+                }}
+            }};
+
+            // 策略选择
+            document.getElementById('strategy-select').addEventListener('change', function(e) {{
+                addChatMessage('system', '已切换至策略: ' + e.target.options[e.target.selectedIndex].text);
+                // 这里可以添加重新加载模拟数据的逻辑
+                document.getElementById('strategy-confidence').textContent = (0.7 + Math.random() * 0.25).toFixed(2);
+            }});
+
+            // 策略对比
+            document.getElementById('btn-compare-strategy').addEventListener('click', function() {{
+                document.getElementById('chart-mode').value = 'strategy';
+                drawChart(window.simHistory, 'strategy');
+            }});
+
+             // 图表模式切换
+            document.getElementById('chart-mode').addEventListener('change', function(e) {{
+                 drawChart(window.simHistory, e.target.value);
+            }});
         }}
         
         function addChatMessage(type, text) {{
@@ -1400,7 +1823,7 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
         function startSimulation() {{
             if (!isSimulating) return;
             
-            // 模拟状态更新
+            // 模拟状态更新 (Mock data for visualization demo)
             const hour = new Date().getHours();
             const solarBase = Math.sin((hour - 6) * Math.PI / 12) * 80;
             const solar = Math.max(0, solarBase + (Math.random() - 0.5) * 20);
@@ -1426,8 +1849,8 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                               hour >= 23 || hour < 7 ? 0.4 : 0.8
                 }},
                 statistics: {{
-                    total_cost: Math.random() * 100,
-                    total_renewable_energy: Math.random() * 500,
+                    total_cost: Math.random() * 1000 + 4000,
+                    total_renewable_energy: Math.random() * 5000 + 20000,
                     renewable_ratio: 0.5 + Math.random() * 0.4
                 }}
             }};
@@ -1442,13 +1865,15 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             window.simHistory.wind_power.push(wind);
             window.simHistory.load_power.push(load);
             
-            if (window.simHistory.solar_power.length > 60) {{
+            // 保持数据长度
+            if (window.simHistory.solar_power.length > 720) {{
                 window.simHistory.solar_power.shift();
                 window.simHistory.wind_power.shift();
                 window.simHistory.load_power.shift();
             }}
             
-            drawChart(window.simHistory);
+            const chartMode = document.getElementById('chart-mode').value;
+            drawChart(window.simHistory, chartMode);
             
             setTimeout(() => startSimulation(), 1000 / simulationSpeed);
         }}
@@ -1465,6 +1890,8 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             }}
             
             if (historyData && Object.keys(historyData).length > 0) {{
+                // 初始化simHistory
+                window.simHistory = historyData;
                 drawChart(historyData);
             }} else {{
                 drawChart(null);
