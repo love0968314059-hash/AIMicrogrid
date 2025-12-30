@@ -12,10 +12,17 @@ from datetime import datetime
 import html
 import base64
 
+try:
+    from .tabbed_visualization_template import get_tabbed_html_template
+    TABBED_TEMPLATE_AVAILABLE = True
+except ImportError:
+    TABBED_TEMPLATE_AVAILABLE = False
+
 
 def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
                                     width: int = 1200, height: int = 800,
-                                    strategy_data: Dict = None) -> str:
+                                    strategy_data: Dict = None, 
+                                    use_tabbed: bool = True) -> str:
     """
     生成完整的3D可视化HTML
     
@@ -52,6 +59,14 @@ def generate_3d_visualization_html(state: Dict = None, history: Dict = None,
             'rule_renewable': []
         }
     })
+    
+    # 如果使用带页签的模板
+    if use_tabbed and TABBED_TEMPLATE_AVAILABLE:
+        try:
+            return get_tabbed_html_template(state_json, history_json, strategy_json)
+        except Exception as e:
+            print(f"警告: 使用带页签模板失败，回退到原模板: {e}")
+            # 继续使用原模板
     
     html_template = f'''
 <!DOCTYPE html>
@@ -1586,9 +1601,9 @@ class Visualization3D:
             print("请在Jupyter Notebook环境中运行")
             return None
     
-    def save_html(self, filepath: str):
+    def save_html(self, filepath: str, strategy_data: Dict = None):
         """保存HTML文件"""
-        html = self.generate()
+        html = self.generate(strategy_data=strategy_data)
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(html)
         print(f"3D可视化界面已保存到: {filepath}")

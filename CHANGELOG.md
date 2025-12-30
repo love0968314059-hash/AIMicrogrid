@@ -1,5 +1,50 @@
 # 微网数字孪生系统 - 更新日志
 
+## 版本 2.1 - 界面优化与文档整合 (2025-12-21)
+
+### 🎨 界面优化
+- ✨ **带页签的工业科技风格界面** - 全新的6页签设计
+  - 3D场景页签：完整的Three.js 3D可视化
+  - 实时监控页签：系统状态监控卡片
+  - 能量管理页签：设备控制和模拟控制
+  - 数据分析页签：指标卡片和趋势图表
+  - 策略分析页签：RL策略状态和对比分析
+  - 智能助手页签：自然语言交互
+- ✨ **工业科技风格设计** - 深色主题、发光效果、金属质感
+- ✨ **完整的数据显示逻辑** - 所有页签都有完整的数据更新
+- ✨ **优化的3D场景** - 完整的Three.js代码和动画效果
+
+### 📝 文档整合
+- ✨ **整合所有MD文档** - 统一到README.md
+- 🗑️ **删除冗余文档** - 清理了README_ENHANCED.md, QUICK_START.md, RUN.md, SUMMARY.md, PROJECT_STRUCTURE.md
+- 📄 **保留CHANGELOG.md** - 作为版本更新日志
+
+### 🧹 项目清理
+- 🗑️ **删除测试文件** - 清理了所有测试脚本和旧版本HTML
+- 📁 **优化项目结构** - 只保留核心代码和最新结果文件
+- ✨ **代码整理** - 确保代码结构清晰、易于维护
+
+### 📊 项目结构
+```
+AIMicrogrid/
+├── microgrid_digital_twin/          # 核心模块
+│   ├── core.py                      # 微网核心模拟
+│   ├── rl_agent.py                  # 强化学习
+│   ├── prediction.py                # 预测模块
+│   ├── evaluation.py                # 评估模块
+│   ├── nlp_interface.py             # NLP接口
+│   ├── visualization.py             # 可视化管理器
+│   └── tabbed_visualization_template.py  # 带页签模板
+├── demo_enhanced.py                 # 完整演示
+├── run_demo.py                      # 快速演示
+├── microgrid_3d_tabbed.html         # 最新可视化界面
+├── requirements.txt                 # 依赖
+├── README.md                        # 主文档（整合版）
+└── CHANGELOG.md                     # 更新日志
+```
+
+---
+
 ## 版本 2.0 - 增强版 (2025-12-21)
 
 ### 🎉 新增功能

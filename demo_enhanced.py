@@ -13,6 +13,7 @@ from microgrid_digital_twin.core import MicrogridDigitalTwin
 from microgrid_digital_twin.rl_agent import EnergyManagementAgent, RuleBasedAgent
 from microgrid_digital_twin.visualization import Visualization3D
 import numpy as np
+import os
 from datetime import datetime, timedelta
 
 
@@ -181,7 +182,8 @@ def run_30day_comparison():
     # 生成3D可视化
     print("🎨 生成交互式3D可视化...")
     viz = Visualization3D(digital_twin)
-    html_path = viz.save_html('/workspace/microgrid_3d_enhanced.html')
+    html_path = os.path.join(os.getcwd(), 'microgrid_3d_enhanced.html')
+    html_path = viz.save_html(html_path, strategy_data=strategy_data)
     
     print(f"✅ 可视化已保存到: {html_path}")
     print()
@@ -268,7 +270,7 @@ if __name__ == "__main__":
         strategy_data = run_30day_comparison()
         print("✅ 演示完成！")
         print()
-        print("📂 打开 /workspace/microgrid_3d_enhanced.html 查看完整可视化界面")
+        print(f"📂 打开 {os.path.join(os.getcwd(), 'microgrid_3d_enhanced.html')} 查看完整可视化界面")
     else:
         print()
         print("💡 您可以直接打开 /workspace/microgrid_3d_visualization.html")
